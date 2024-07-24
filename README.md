@@ -17,6 +17,7 @@ We aim to extend the dataset with more categories but also with more images.
 We have created this separate repo for the AMD Pervasive AI Developer Contest.
 
 In order to run this example, please follow the tutorial from the Vitis-AI-Tutorial repo with the following changes:
+* The resnet18_terraset folder from this repo needs to be placed in the Vitis-AI-Tutorial/Tutorials/ folder.
 * The dataset (TerraSet6) needs to be downloaded, unzipped and placed in Vitis-AI/Vitis-AI-Tutorial/Tutorials/resnet18_terraset/files/target/terraset/. The name of the folder needs to be terraset6.
 * After running the appropriate docker as per the original tutorial, make sure to activate the conda environment, then run the following commands:
   - source run_all_2.sh run_clean_dos2unix
