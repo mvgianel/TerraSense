@@ -3,13 +3,13 @@ Heavily inspired by https://github.com/amd/Kria-RoboticsAI/blob/main/files/ROSAI
 '''
 
 import rclpy
-from launch_ros.substitutions import FindPackage
 from rclpy.node import Node
 from std_srvs.srv import Empty
 import numpy as np
 import sys
 import os
 from sensor_msgs.msg import Image
+from ament_index_python.packages import get_package_share_directory
 
 # import CV BRIDGE
 from cv_bridge import CvBridge, CvBridgeError
@@ -20,7 +20,7 @@ sys.path.append('/usr/local/share/pynq-venv/lib/python3.10/site-packages')
 # the above path is needed by pynq_dpu
 from pynq_dpu import DpuOverlay
 
-ml_model = 'zcu102_train1_resnet18_cifar10.xmodel'
+ml_model = 'zcu102_q_train2_resnet18_terraset6.h5.xmodel'
 
 class MLPublisher(Node):
     def __init__(self):
@@ -34,7 +34,7 @@ class MLPublisher(Node):
 
         # Overlay the DPU and Vitis-AI .xmodel file
         self.overlay = DpuOverlay("dpu.bit")
-        self.model_path = os.path.join(FindPackage('terra_sense'), 'config', ml_model)
+        self.model_path = os.path.join(get_package_share_directory('terra_sense'), 'config', ml_model)
         self.get_logger().info("MODEL="+self.model_path)
         self.overlay.load_model(self.model_path)
 
@@ -55,7 +55,7 @@ class MLPublisher(Node):
         x1 = (208)
         x2 = (208+280)
         roi_img = cv2_image_org[ y1:y2, x1:x2, : ]
-        resized_image = cv2.resize(roi_img, (28, 28), interpolation=cv2.INTER_LINEAR)
+        resized_image = cv2.resize(roi_img, (224, 224), interpolation=cv2.INTER_LINEAR)
         roi_img_gray=cv2.cvtColor(resized_image, cv2.COLOR_BGR2GRAY)
         cv2_image_normal = np.asarray(roi_img_gray/255, dtype=np.float32)
         cv2_image = np.expand_dims(cv2_image_normal, axis=2)
@@ -88,7 +88,7 @@ class MLPublisher(Node):
 
         # CONVERT BACK TO ROS & PUBLISH
         image_ros = bridge.cv2_to_imgmsg(cv2_image)
-        self.publisher1.publish(image_ros)
+        self.publisher_.publish(image_ros)
         self.get_logger().info("published prediction="+str(prediction))
 
 def main(args=None):
