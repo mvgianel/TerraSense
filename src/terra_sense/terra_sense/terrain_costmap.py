@@ -1,38 +1,63 @@
 import rclpy
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from std_msgs.msg import String
-from nav_msgs.msg import OccupancyGrid
+from nav2_costmap_2d.plugins.layer import Layer
+from nav2_costmap_2d.costmap_2d import Costmap2D, FREE_SPACE, LETHAL_OBSTACLE, NO_INFORMATION
 
-class TerrainCostmapLayer(Node):
+class CostmapLayer(Layer):
+    
+
+class CostmapNode(Node):
     def __init__(self):
-        super().__init__('terrain_costmap_layer')
-        self.subscription = self.create_subscription(String, 'terrain_class', self.listener_callback, 10)
-        self.publisher_ = self.create_publisher(OccupancyGrid, 'costmap', 10)
-        self.costmap = OccupancyGrid()
-        self.initialize_costmap()
+        super().__init__()
+        self.terrain_type = "4"  # Default terrain type
 
-    def initialize_costmap(self):
-        self.costmap.header.frame_id = 'map'
-        self.costmap.info.resolution = 0.05
-        self.costmap.info.width = 100
-        self.costmap.info.height = 100
-        self.costmap.info.origin.position.x = 0.0
-        self.costmap.info.origin.position.y = 0.0
-        self.costmap.data = [0] * (self.costmap.info.width * self.costmap.info.height)
+    def on_initialize(self):
+        self.declare_parameter('topic', '/terrain_class')
+        self.declare_parameter('default_cost', 0)
+        self.topic = self.get_parameter('topic').value
+        self.default_cost = self.get_parameter('default_cost').value
+        self.subscription = self.create_subscription(
+            String,
+            self.topic,
+            self.terrain_callback,
+            10
+        )
 
-    def listener_callback(self, msg):
-        terrain_type = msg.data
-        if terrain_type == "smooth":
-            self.update_costmap(0)
-        elif terrain_type == "rough":
-            self.update_costmap(100)
-        elif terrain_type == "stop":
-            self.update_costmap(-1)
+    def terrain_callback(self, msg):
+        '''terrain types:
+        1- Cobblestone/brick
+        2- dirtground
+        3- grass
+        4- pavement
+        5- sand
+        6- stairs'''
+        self.terrain_type = msg.data
+        if self.terrain_type == "smooth":
+            self.default_cost = FREE_SPACE
+        elif self.terrain_type == "rough":
+            self.default_cost = LETHAL_OBSTACLE
+        elif self.terrain_type == "stop":
+            self.default_cost = NO_INFORMATION
+        self.update_costmap()
 
-    def update_costmap(self, cost):
-        self.costmap.data = [cost] * (self.costmap.info.width * self.costmap.info.height)
-        self.costmap.header.stamp = self.get_clock().now().to_msg()
-        self.publisher_.publish(self.costmap)
+     def update_costmap(self):
+        # Implement the logic to update the costmap based on the terrain type
+        # This example sets the entire costmap to the default cost for simplicity
+        for i in range(self.master_grid_.get_size_in_cells_x()):
+            for j in range(self.master_grid_.get_size_in_cells_y()):
+                self.master_grid_.set_cost(i, j, self.default_cost)
+
+    def update_bounds(self, origin_x, origin_y, origin_yaw, bounds):
+        bounds[0] = min(bounds[0], 0)
+        bounds[1] = min(bounds[1], 0)
+        bounds[2] = max(bounds[2], self.master_grid_.get_size_in_cells_x())
+        bounds[3] = max(bounds[3], self.master_grid_.get_size_in_cells_y())
+
+    def update_costs(self, master_grid, min_i, min_j, max_i, max_j):
+        self.update_costmap()
+        master_grid.update_with_true_costmap(min_i, min_j, max_i, max_j)
 
 def main(args=None):
     rclpy.init(args=args)

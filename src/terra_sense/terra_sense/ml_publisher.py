@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 '''
 Heavily inspired by https://github.com/amd/Kria-RoboticsAI/blob/main/files/ROSAI/camera_input/rosai_camera/rosai_camera/rosai_camera_demo.py
 '''
