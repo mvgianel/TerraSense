@@ -22,3 +22,20 @@ bt_navigator:
 waypoint_follower:
   ros__parameters:
     use_sim_time: False
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      plugins: ["terra-sense::TerrainLayer"]
+      terrain_costmap_layer:
+        plugin: "terra-sense::TerrainLayer"
+        topic: "/terrain_class"
+        default_cost: 0
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      plugins: ["terra-sense::TerrainLayer"]
+      terrain_costmap_layer:
+        plugin: "terra-sense::TerrainLayer"
+        topic: "/terrain_class"
+        default_cost: 0

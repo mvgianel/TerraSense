@@ -1,0 +1,5 @@
+<library path="lib/terra-sense-core">
+  <class name="terra-sense::TerrainLayer" type="terra-sense::TerrainLayer" base_class_type="nav2_costmap_2d::Layer">
+    <description>Custom terrain costmap layer</description>
+  </class>
+</library>

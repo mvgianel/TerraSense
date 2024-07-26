@@ -1,26 +1,35 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>terra_sense</name>
+  <name>terra-sense</name>
   <version>0.0.0</version>
-  <description>ROS2 package to publish PYNQ ML inference results</description>
-  <maintainer email="root@todo.todo">root</maintainer>
+  <description>TODO: Package description</description>
+  <maintainer email="gianello.m@northeastern.edu">kivi</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
-  <buildtool_depend>ament_python</buildtool_depend>
-
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+  
+  <depend>rclcpp</depend>
   <depend>rclpy</depend>
-  <depend>std_msgs</depend>
 
-  <exec_depend>python3</exec_depend>
+  <build_depend>rclcpp</build_depend>
+  <build_depend>std_msgs</build_depend>
+  <build_depend>nav2_costmap_2d</build_depend>
+  <build_depend>pluginlib</build_depend>
+  <build_depend>nav2_core</build_depend>
 
-  <test_depend>ament_copyright</test_depend>
-  <test_depend>ament_flake8</test_depend>
-  <test_depend>ament_pep257</test_depend>
-  <test_depend>python3-pytest</test_depend>
+  <exec_depend>rclcpp</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>nav2_costmap_2d</exec_depend>
+  <exec_depend>pluginlib</exec_depend>
+  <exec_depend>nav2_core</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
 
   <export>
-    <build_type>ament_python</build_type>
+    <build_type>ament_cmake</build_type>
+    <nav2_costmap_2d plugin="${prefix}/share/terrain_costmap_layer/terrain_costmap_layer.xml"/>
   </export>
 </package>
