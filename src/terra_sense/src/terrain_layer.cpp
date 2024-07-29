@@ -1,4 +1,4 @@
-# based on https://wiki.ros.org/costmap_2d/Tutorials/Creating%20a%20New%20Layer
+// based on https://wiki.ros.org/costmap_2d/Tutorials/Creating%20a%20New%20Layer
 #include <terra_sense/terrain_layer.hpp>
 #include "nav2_costmap_2d/costmap_math.hpp"
 #include "nav2_costmap_2d/footprint.hpp"
@@ -7,35 +7,34 @@ using nav2_costmap_2d::LETHAL_OBSTACLE;
 using nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE;
 using nav2_costmap_2d::NO_INFORMATION;
 
-namespace terra-sense
+namespace terra_sense
 {
 
-TerrainLayer::TerrainLayer() 
-: terrain_cost_(nav2_costmap_2d::FREE_SPACE)
+TerrainLayer::TerrainLayer() : terrain_cost_(nav2_costmap_2d::FREE_SPACE)
 {}
 
 void TerrainLayer::onInitialize()
 {
-  auto node = node_.lock(); 
-  if (!node_) {
-    RCLCPP_ERROR(rclcpp::get_logger("TerrainCostmapLayer"), "Failed to lock node");
-    return;
-  }
-
   declareParameter("topic", rclcpp::ParameterValue("/terrain_class"));
   declareParameter("default_cost", rclcpp::ParameterValue(0));
 
-  node_->get_parameter("topic", topic_);
-  node_->get_parameter("default_cost", default_cost_);
+  auto node = node_.lock();
+  if (!node) {
+      RCLCPP_ERROR(rclcpp::get_logger("TerrainLayer"), "Failed to lock node");
+      return;
+  }
 
-  need_recalculation_ = false;
-  current_ = true;
-  terrain_sub_ = node_->create_subscription<std_msgs::msg::String>(
-      "/terrain_class", rclcpp::SensorDataQoS(),
+  node->get_parameter("topic", topic_);
+  node->get_parameter("default_cost", default_cost_);
+
+subscription_ = node->create_subscription<std_msgs::msg::String>(
+      topic_, 10,
       std::bind(&TerrainLayer::terrainCallback, this, std::placeholders::_1));
+
+  current_ = true;
 }
 
-void TerrainLayer::terrainCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+void TerrainLayer::terrainCallback(const std_msgs::msg::String::SharedPtr msg)
 {
   // 1-cobblestone/brick
   // 2-dirtground
@@ -82,4 +81,4 @@ void TerrainLayer::updateCosts(nav2_costmap_2d::Costmap2D &master_grid, int min_
 }
 
 #include "pluginlib/class_list_macros.hpp"
-PLUGINLIB_EXPORT_CLASS(nav2_terrain_costmap_plugin::TerrainLayer, nav2_costmap_2d::Layer)
+PLUGINLIB_EXPORT_CLASS(terra_sense::TerrainLayer, nav2_costmap_2d::Layer)

@@ -1,7 +1,19 @@
 cmake_minimum_required(VERSION 3.8)
-project(terra-sense)
+project(terra_sense)
 
-set(lib_name ${PROJECT_NAME}-core)
+set(lib_name ${PROJECT_NAME}_core)
+
+# === Environment ===
+
+# Default to C99
+if(NOT CMAKE_C_STANDARD)
+  set(CMAKE_C_STANDARD 99)
+endif()
+
+# Default to C++14
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 14)
+endif()
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -14,55 +26,61 @@ find_package(rclcpp REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(nav2_costmap_2d REQUIRED)
-find_package(nav2_core REQUIRED)
+# find_package(nav2_core REQUIRED)
 find_package(pluginlib REQUIRED)
 
 set(dep_pkgs
   rclcpp
+  rclpy
   std_msgs
   nav2_costmap_2d
   pluginlib
 )
 
+
+# either library or executable
+add_library(${lib_name}  SHARED 
+  src/terrain_layer.cpp)
+
 # Cpp
 include_directories(
   include
-  ${rclcpp_INCLUDE_DIRS}
-  ${std_msgs_INCLUDE_DIRS}
-  ${nav2_costmap_2d_INCLUDE_DIRS}
+  # ${rclcpp_INCLUDE_DIRS}
+  # ${std_msgs_INCLUDE_DIRS}
+  # ${nav2_costmap_2d_INCLUDE_DIRS}
 )
-# either library or executable
-add_library(${lib_name}  SHARED src/terrain_layer.cpp)
+
+install(TARGETS ${lib_name}
+DESTINATION lib
+)
+# DIRECTORY
+# FILES
+
+pluginlib_export_plugin_description_file(nav2_costmap_2d terrain_layer.xml)
+ament_target_dependencies(${lib_name} ${dep_pkgs})
 
 install(
   DIRECTORY 
   launch 
-  DESTINATION /share/${PROJECT_NAME}
+  DESTINATION share/${PROJECT_NAME}
 )
 
 install(
   DIRECTORY 
   config
-  DESTINATION /share/${PROJECT_NAME}
+  DESTINATION share/${PROJECT_NAME}
 )
-
-install(TARGETS ${lib_name}
-DESTINATION lib/${lib_name}
-)
-# DIRECTORY
-# FILES
-
-pluginlib_export_plugin_description_file(nav2_costmap_2d terrain_costmap_layer.xml)
-ament_target_dependencies(${lib_name} ${dep_pkgs})
 
 # Python
 ament_python_install_package(${PROJECT_NAME})
+
 install(PROGRAMS
   scripts/terrain_publisher.py
-  scripts/spped_adjust.py
-  DESTINATION /share/${PROJECT_NAME}
+  scripts/speed_adjust.py
+  DESTINATION share/${PROJECT_NAME}
 )
 
+ament_export_dependencies(${dep_pkgs})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
