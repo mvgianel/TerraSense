@@ -1,7 +1,10 @@
-// based on https://wiki.ros.org/costmap_2d/Tutorials/Creating%20a%20New%20Layer
 #include <terra_sense/terrain_layer.hpp>
 #include "nav2_costmap_2d/costmap_math.hpp"
 #include "nav2_costmap_2d/footprint.hpp"
+#include "tf2/convert.h"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
+#include "nav2_util/validate_messages.hpp"
+#include "rclcpp/parameter_events_filter.hpp"
 
 using nav2_costmap_2d::LETHAL_OBSTACLE;
 using nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE;
@@ -10,75 +13,120 @@ using nav2_costmap_2d::NO_INFORMATION;
 namespace terra_sense
 {
 
-TerrainLayer::TerrainLayer() : terrain_cost_(nav2_costmap_2d::FREE_SPACE)
+TerrainLayer::TerrainLayer()
+: last_min_x_(-std::numeric_limits<float>::max()),
+  last_min_y_(-std::numeric_limits<float>::max()),
+  last_max_x_(std::numeric_limits<float>::max()),
+  last_max_y_(std::numeric_limits<float>::max())
 {}
 
 void TerrainLayer::onInitialize()
 {
-  declareParameter("topic", rclcpp::ParameterValue("/terrain_class"));
-  declareParameter("default_cost", rclcpp::ParameterValue(0));
-
   auto node = node_.lock();
   if (!node) {
-      RCLCPP_ERROR(rclcpp::get_logger("TerrainLayer"), "Failed to lock node");
-      return;
+    throw std::runtime_error{"Failed to lock node"};
   }
 
-  node->get_parameter("topic", topic_);
-  node->get_parameter("default_cost", default_cost_);
+  node->declare_parameter(name_ + "." + "enabled", rclcpp::ParameterValue(true));
+  node->get_parameter(name_ + "." + "enabled", enabled_);
 
-subscription_ = node->create_subscription<std_msgs::msg::String>(
-      topic_, 10,
-      std::bind(&TerrainLayer::terrainCallback, this, std::placeholders::_1));
-
-  current_ = true;
-}
-
-void TerrainLayer::terrainCallback(const std_msgs::msg::String::SharedPtr msg)
-{
-  // 1-cobblestone/brick
-  // 2-dirtground
-  // 3-grass
-  // 4-pavement
-  // 5-sand
-  // 6-stairs
+  terrain_subscription_ = node->create_subscription<std_msgs::msg::String>(
+    "/terrain_class", 10, std::bind(&TerrainLayer::terrainCallback, this, std::placeholders::_1));
+  cost_publisher_ = node->create_publisher<std_msgs::msg::String>("/cost_changes",40);
   
-  if (msg->data == "1" || msg->data == "2") {
-            terrain_cost_ = 100;  // Slow
-        } else if (msg->data == "3" || msg->data == "5") {
-            terrain_cost_ = 150;  // Slower
-        } else if (msg->data == "4") {
-            terrain_cost_ = nav2_costmap_2d::FREE_SPACE;  // Normal
-        } else if (msg->data == "6") {
-            terrain_cost_ = nav2_costmap_2d::LETHAL_OBSTACLE;  // Stop
-        } else {
-            terrain_cost_ = default_cost_;  // Default behavior
-        }
+  current_ = true;
+  need_recalculation_ = false;
 }
 
-void TerrainLayer::updateBounds(double /*robot_x*/, double /*robot_y*/, double /*robot_yaw*/, double * min_x,
-  double * min_y, double * max_x, double * max_y)
+void TerrainLayer::onFootprintChanged()
 {
-  *min_x = std::min(*min_x, 0.0);
-  *min_y = std::min(*min_y, 0.0);
-  *max_x = std::max(*max_x, static_cast<double>(layered_costmap_->getCostmap()->getSizeInCellsX()));
-  *max_y = std::max(*max_y, static_cast<double>(layered_costmap_->getCostmap()->getSizeInCellsY()));
+  need_recalculation_ = true;
+
+  RCLCPP_DEBUG(rclcpp::get_logger("nav2_costmap_2d"), "TerrainLayer::onFootprintChanged(): num footprint points: %lu", layered_costmap_->getFootprint().size());
 }
 
-void TerrainLayer::updateCosts(nav2_costmap_2d::Costmap2D &master_grid, int min_i, int min_j, int max_i, int max_j)
+void TerrainLayer::updateBounds(double origin_x, double origin_y, double origin_yaw, double* min_x, double* min_y, double* max_x, double* max_y)
+{
+  if (need_recalculation_) {
+    last_min_x_ = *min_x;
+    last_min_y_ = *min_y;
+    last_max_x_ = *max_x;
+    last_max_y_ = *max_y;
+    *min_x = -std::numeric_limits<float>::max();
+    *min_y = -std::numeric_limits<float>::max();
+    *max_x = std::numeric_limits<float>::max();
+    *max_y = std::numeric_limits<float>::max();
+    need_recalculation_ = false;
+  } else {
+    double tmp_min_x = last_min_x_;
+    double tmp_min_y = last_min_y_;
+    double tmp_max_x = last_max_x_;
+    double tmp_max_y = last_max_y_;
+    last_min_x_ = *min_x;
+    last_min_y_ = *min_y;
+    last_max_x_ = *max_x;
+    last_max_y_ = *max_y;
+    *min_x = std::min(tmp_min_x, *min_x);
+    *min_y = std::min(tmp_min_y, *min_y);
+    *max_x = std::max(tmp_max_x, *max_x);
+    *max_y = std::max(tmp_max_y, *max_y);
+  }
+}
+
+void TerrainLayer::updateCosts(nav2_costmap_2d::Costmap2D& master_grid, int min_i, int min_j, int max_i, int max_j)
 {
   if (!enabled_) {
     return;
   }
+  
+  auto* master_array = master_grid.getCharMap();
+  auto size_x = master_grid.getSizeInCellsX();
+  auto size_y = master_grid.getSizeInCellsY();
 
-  for (int i = min_i; i < max_i; i++) {
-    for (int j = min_j; j < max_j; j++) {
-        master_grid.setCost(i, j, terrain_cost_);
+  min_i = std::max(0, min_i);
+  min_j = std::max(0, min_j);
+  max_i = std::min(static_cast<int>(size_x), max_i);
+  max_j = std::min(static_cast<int>(size_y), max_j);
+
+  for (int i = min_i; i < max_i; ++i) {
+    for (int j = min_j; j < max_j; ++j) {
+      unsigned char old_cost = master_grid.getCost(i, j);
+      unsigned char new_cost = old_cost + terrain_cost_;
+      master_grid.setCost(i, j, std::max(new_cost, terrain_cost_));
+
+      std_msgs::msg::String msg;
+      std::stringstream ss;
+      ss << "terrain: " << terrain_ 
+         << ", prev cost: " << static_cast<int>(old_cost) 
+         << ", new cost: " << static_cast<int>(new_cost);
+      msg.data = ss.str();
+      cost_publisher_->publish(msg);
+      // auto index = master_grid.getIndex(i, j);
+      // if (terrain_cost_ != NO_INFORMATION) {
+      //   master_array[index] = getCost(mx, my) + terrain_cost_;
+      // }
     }
   }
 }
 
+void TerrainLayer::terrainCallback(const std_msgs::msg::String::SharedPtr msg)
+{
+  terrain_ = msg->data;
+
+  if (terrain_ == "1" || terrain_ == "4") {
+    terrain_cost_ = NO_INFORMATION;
+  } else if (terrain_ == "2" || terrain_ == "3" || terrain_ == "5") {
+    terrain_cost_ = INSCRIBED_INFLATED_OBSTACLE;
+  } else if (terrain_ == "6") {
+    terrain_cost_ = LETHAL_OBSTACLE;
+  } else {
+    terrain_cost_ = NO_INFORMATION;
+  }
+
+  // RCLCPP_INFO(rclcpp::get_logger("TerrainLayer"), "Terrain cost: '%d'", terrain_cost_);
 }
+
+}  // namespace terra_sense
 
 #include "pluginlib/class_list_macros.hpp"
 PLUGINLIB_EXPORT_CLASS(terra_sense::TerrainLayer, nav2_costmap_2d::Layer)

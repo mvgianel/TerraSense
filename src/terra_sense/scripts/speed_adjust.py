@@ -14,7 +14,9 @@ class SpeedAdjustmentNode(Node):
         self.terrain_classification_topic = self.get_parameter('terrain_classification_topic').get_parameter_value().string_value
         self.cmd_vel_topic = self.get_parameter('cmd_vel_topic').get_parameter_value().string_value
 
-        self.current_speed = 0.2
+        self.current_terrain = '0'
+        self.acceleration = 0
+        self.stop = False
 
         self.terrain_sub = self.create_subscription(
             String,
@@ -31,24 +33,35 @@ class SpeedAdjustmentNode(Node):
         self.adjusted_cmd_vel_pub = self.create_publisher(Twist, self.cmd_vel_topic, 10)
 
     def terrain_callback(self, msg):
-        if msg.data == 'cobblestone/brick' or msg.data == 'dirtground':
-            self.current_speed = 0.1
-        elif msg.data == 'grass' or msg.data == 'sand':
-            self.current_speed = 0.05
-        elif msg.data == 'pavement':
-            self.current_speed = 0.2
-        elif msg.data == 'stairs':
-            self.current_speed = 0.0
+        if self.current_terrain == msg.data:
+            self.acceleration = 0
+        else:
+            if msg.data == '2' or msg.data == '3' or msg.data == '5':
+                self.acceleration = -0.5
+            elif msg.data == '4' or msg.data == '1':
+                self.acceleration = 0.0
+            elif msg.data == '6':
+                self.acceleration = 0.2
+                self.stop = True
 
     def cmd_vel_callback(self, msg):
         adjusted_cmd_vel = Twist()
-        adjusted_cmd_vel.linear.x = msg.linear.x * self.current_speed
-        adjusted_cmd_vel.linear.y = msg.linear.y * self.current_speed
-        adjusted_cmd_vel.linear.z = msg.linear.z * self.current_speed
-        adjusted_cmd_vel.angular.x = msg.angular.x
-        adjusted_cmd_vel.angular.y = msg.angular.y
-        adjusted_cmd_vel.angular.z = msg.angular.z
-        self.adjusted_cmd_vel_pub.publish(adjusted_cmd_vel)
+        if self.stop:
+            adjusted_cmd_vel.linear.x = 0
+            adjusted_cmd_vel.linear.y = 0
+            adjusted_cmd_vel.linear.z = msg.linear.z 
+            adjusted_cmd_vel.angular.x = msg.angular.x
+            adjusted_cmd_vel.angular.y = msg.angular.y
+            adjusted_cmd_vel.angular.z = msg.angular.z * self.acceleration
+            self.adjusted_cmd_vel_pub.publish(adjusted_cmd_vel)
+        else:
+            adjusted_cmd_vel.linear.x = msg.linear.x * self.acceleration
+            adjusted_cmd_vel.linear.y = msg.linear.y * self.acceleration
+            adjusted_cmd_vel.linear.z = msg.linear.z * self.acceleration
+            adjusted_cmd_vel.angular.x = msg.angular.x
+            adjusted_cmd_vel.angular.y = msg.angular.y
+            adjusted_cmd_vel.angular.z = msg.angular.z
+            self.adjusted_cmd_vel_pub.publish(adjusted_cmd_vel)
 
 def main(args=None):
     rclpy.init(args=args)

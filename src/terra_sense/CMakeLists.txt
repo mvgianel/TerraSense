@@ -25,8 +25,10 @@ find_package(ament_cmake_python REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(nav2_costmap_2d REQUIRED)
-# find_package(nav2_core REQUIRED)
+find_package(pcl_conversions REQUIRED)
+find_package(pcl_ros REQUIRED)
 find_package(pluginlib REQUIRED)
 
 set(dep_pkgs
@@ -35,6 +37,9 @@ set(dep_pkgs
   std_msgs
   nav2_costmap_2d
   pluginlib
+  sensor_msgs
+  pcl_conversions
+  pcl_ros
 )
 
 
@@ -45,9 +50,6 @@ add_library(${lib_name}  SHARED
 # Cpp
 include_directories(
   include
-  # ${rclcpp_INCLUDE_DIRS}
-  # ${std_msgs_INCLUDE_DIRS}
-  # ${nav2_costmap_2d_INCLUDE_DIRS}
 )
 
 install(TARGETS ${lib_name}
@@ -77,7 +79,7 @@ ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   scripts/terrain_publisher.py
   scripts/speed_adjust.py
-  DESTINATION share/${PROJECT_NAME}
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 ament_export_dependencies(${dep_pkgs})
