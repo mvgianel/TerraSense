@@ -9,6 +9,7 @@
 using nav2_costmap_2d::LETHAL_OBSTACLE;
 using nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE;
 using nav2_costmap_2d::NO_INFORMATION;
+using nav2_costmap_2d::FREE_SPACE;
 
 namespace terra_sense
 {
@@ -92,7 +93,7 @@ void TerrainLayer::updateCosts(nav2_costmap_2d::Costmap2D& master_grid, int min_
     for (int j = min_j; j < max_j; ++j) {
       unsigned char old_cost = master_grid.getCost(i, j);
       unsigned char new_cost = old_cost + terrain_cost_;
-      master_grid.setCost(i, j, std::max(new_cost, terrain_cost_));
+      master_grid.setCost(i, j, new_cost);
 
       std_msgs::msg::String msg;
       std::stringstream ss;
@@ -111,12 +112,15 @@ void TerrainLayer::updateCosts(nav2_costmap_2d::Costmap2D& master_grid, int min_
 
 void TerrainLayer::terrainCallback(const std_msgs::msg::String::SharedPtr msg)
 {
+  if(msg->data == terrain_)
+    return;
+
   terrain_ = msg->data;
 
   if (terrain_ == "1" || terrain_ == "4") {
-    terrain_cost_ = NO_INFORMATION;
+    terrain_cost_ = FREE_SPACE;
   } else if (terrain_ == "2" || terrain_ == "3" || terrain_ == "5") {
-    terrain_cost_ = INSCRIBED_INFLATED_OBSTACLE;
+    terrain_cost_ = 5;
   } else if (terrain_ == "6") {
     terrain_cost_ = LETHAL_OBSTACLE;
   } else {
