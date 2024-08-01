@@ -1,0 +1,5 @@
+<library path="terra_sense_core">
+  <class type="terra_sense::TerrainLayer" base_class_type="nav2_costmap_2d::Layer">
+    <description>Custom costmap layer based on terrain detected by camera and classified by ML</description>
+  </class>
+</library>

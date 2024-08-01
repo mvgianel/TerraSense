@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 '''
 Heavily inspired by https://github.com/amd/Kria-RoboticsAI/blob/main/files/ROSAI/camera_input/rosai_camera/rosai_camera/rosai_camera_demo.py
 '''
@@ -9,6 +10,7 @@ import numpy as np
 import sys
 import os
 from sensor_msgs.msg import Image
+from std_msgs.msg import String
 from ament_index_python.packages import get_package_share_directory
 
 # import CV BRIDGE
@@ -28,9 +30,9 @@ class MLPublisher(Node):
         self.subscriber_ = self.create_subscription(Image, '/camera/camera/color/image_raw', self.listener_callback, 10)
         self.get_logger().info('[INFO] __init__, Create Subscription to rgb image...')
         self.subscriber_  # prevent unused variable warning
-        self.publisher_ = self.create_publisher(Image, 'terrain_class', 10)
+        self.publisher_ = self.create_publisher(String, 'terrain_class', 10)
         # Add terrain distance 
-        self.publisher_ = self.create_publisher(Image, 'terrain_dist', 10)
+        # self.publisher_ = self.create_publisher(Image, 'terrain_dist', 10)
 
         # Overlay the DPU and Vitis-AI .xmodel file
         self.overlay = DpuOverlay("dpu.bit")
@@ -80,16 +82,45 @@ class MLPublisher(Node):
         prediction = softmax.argmax()
 
         self.get_logger().info("prediction="+str(prediction))
+        self.publisher_.publish(str(prediction))
+
+        # # Calculate ROI center
+        # roi_center_x = (x1 + x2) / 2
+        # roi_center_y = (y1 + y2) / 2
+
+        # # Assuming you have the camera intrinsic parameters
+        # fx = 500  # Focal length in x direction
+        # fy = 500  # Focal length in y direction
+        # cx = 320  # Principal point x-coordinate
+        # cy = 240  # Principal point y-coordinate
+
+        # # Depth value at the center of the ROI
+        # depth = 1.0  # This should be obtained from a depth sensor or estimation
+
+        # # Calculate the real-world coordinates
+        # real_x = (roi_center_x - cx) * depth / fx
+        # real_y = (roi_center_y - cy) * depth / fy
+        # real_z = depth
+
+        # # Create and publish the terrain location message
+        # terrain_location_msg = PointStamped()
+        # terrain_location_msg.header.frame_id = str(prediction)
+        # terrain_location_msg.point.x = real_x
+        # terrain_location_msg.point.y = real_y
+        # terrain_location_msg.point.z = real_z
+
+        # self.publisher_dist.publish(terrain_location_msg)
+
 
         # DISPLAY
-        cv2_bgr_image = cv2.cvtColor(cv2_image_org, cv2.COLOR_RGB2BGR)
-        cv2.imshow('rosai_demo',cv2_bgr_image)
-        cv2.waitKey(1)
+        # cv2_bgr_image = cv2.cvtColor(cv2_image_org, cv2.COLOR_RGB2BGR)
+        # cv2.imshow('rosai_demo',cv2_bgr_image)
+        # cv2.waitKey(1)
 
         # CONVERT BACK TO ROS & PUBLISH
-        image_ros = bridge.cv2_to_imgmsg(cv2_image)
-        self.publisher_.publish(image_ros)
-        self.get_logger().info("published prediction="+str(prediction))
+        # image_ros = bridge.cv2_to_imgmsg(cv2_image)
+        # self.publisher_.publish(image_ros)
+        # self.get_logger().info("published prediction="+str(prediction))
 
 def main(args=None):
     rclpy.init(args=args)
