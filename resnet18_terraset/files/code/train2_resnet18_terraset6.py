@@ -189,20 +189,8 @@ def load_terraset6(dataset_path, img_height=224, img_width=224, batch_size=32, v
         return image, label
 
     unbatched_dataset=dataset.unbatch()
-
-    # Augment dataset by applying transformations
-    augmented_datasets = [unbatched_dataset]
-    for preprocess_func in [random_crop, random_flip, random_brightness, random_rotation, random_zoom, random_contrast, random_saturation, random_hue]:
-        augmented_datasets.append(unbatched_dataset.map(preprocess_func, num_parallel_calls=tf.data.AUTOTUNE))
-
-    # Combine original and augmented datasets
-    full_dataset = augmented_datasets[0]
-    for aug_ds in augmented_datasets[1:]:
-        full_dataset = full_dataset.concatenate(aug_ds)
-
-    #full_dataset = full_dataset.batch(batch_size)
-
-    # Convert the combined dataset to numpy arrays
+    
+    # Convert dataset to numpy for splitting
     def dataset_to_numpy(dataset):
         images = []
         labels = []
@@ -210,25 +198,80 @@ def load_terraset6(dataset_path, img_height=224, img_width=224, batch_size=32, v
             images.append(image.numpy())
             labels.append(label.numpy())
         return np.array(images), np.array(labels)
-
-    x_full, y_full = dataset_to_numpy(full_dataset)
-
-    print("Total number of images after aug:", len(x_full))
-    #import pdb; pdb.set_trace()
-
-    # Shuffle the full dataset
-    indices = np.arange(len(x_full))
-    np.random.shuffle(indices)
-    x_full = x_full[indices]
-    y_full = y_full[indices]
+        
+    x_original, y_original = dataset_to_numpy(unbatched_dataset)
+    
+    # Shuffle and split before the augmentation
+    # Shuffle the original dataset
+    #indices = np.arange(len(x_original))
+    #np.random.shuffle(indices)
+    #x_original = x_original[indices]
+    #y_original = y_original[indices]
 
     # Split the dataset into training and validation sets
-    split_index = int((1 - validation_split) * len(x_full))
-    x_train, y_train = x_full[:split_index], y_full[:split_index]
-    x_test, y_test = x_full[split_index:], y_full[split_index:]
+    split_index = int((1 - validation_split) * len(x_original))
+    x_train, y_train = x_original[:split_index], y_original[:split_index]
+    x_test, y_test = x_original[split_index:], y_original[split_index:]
+    
+    print("Size of training dataset before augmentation", len(x_train))
+    print("Size of testing dataset before augmentation", len(x_test))
+    print("Size of training + testing dataset before augmentation", (len(x_train)+len(x_test)))
+    
+    # Convert numpy arrays back to tf.data.Dataset
+    def numpy_to_dataset(x, y):
+        return tf.data.Dataset.from_tensor_slices((x,y))
+        
+    training_dataset = numpy_to_dataset(x_train, y_train)
+    testing_dataset = numpy_to_dataset(x_test, y_test)
+
+    # Augment each dataset by applying transformations
+    augmented_training_dataset = [training_dataset]
+    for preprocess_func in [random_crop, random_flip, random_brightness, random_rotation, random_zoom, random_contrast, random_saturation, random_hue]:
+        augmented_training_dataset.append(training_dataset.map(preprocess_func, num_parallel_calls=tf.data.AUTOTUNE))
+
+    # Combine original and augmented datasets
+        augmented_training_dataset_full = augmented_training_dataset[0]
+        for aug_ds in augmented_training_dataset[1:]:
+            augmented_training_dataset_full = augmented_training_dataset_full.concatenate(aug_ds)
+
+    # Augment each dataset by applying transformations
+    augmented_testing_dataset = [testing_dataset]
+    for preprocess_func in [random_crop, random_flip, random_brightness, random_rotation, random_zoom, random_contrast, random_saturation, random_hue]:
+        augmented_testing_dataset.append(testing_dataset.map(preprocess_func, num_parallel_calls=tf.data.AUTOTUNE))
+
+    # Combine original and augmented datasets
+        augmented_testing_dataset_full = augmented_testing_dataset[0]
+        for aug_ds in augmented_testing_dataset[1:]:
+            augmented_testing_dataset_full = augmented_testing_dataset_full.concatenate(aug_ds) 
+        
+
+    # Convert datasets to numpy arrays
+    x_train_augmented, y_train_augmented = dataset_to_numpy(augmented_training_dataset_full)
+    x_test_augmented, y_test_augmented = dataset_to_numpy(augmented_testing_dataset_full)
+    
+    print("Size of training dataset after augmentation", len(x_train_augmented))
+    print("Size of testing dataset after augmentation", len(x_test_augmented))
+    print("Size of training + testing dataset after augmentation", (len(x_train_augmented)+len(x_test_augmented)))
+
+    # Shuffle the datasets
+    #indices = np.arange(len(x_train_augmented))
+    #np.random.shuffle(indices)
+    #x_train_augmented = x_train_augmented[indices]
+    #y_train_augmented = y_train_augmented[indices]
+    
+    #indices = np.arange(len(x_test_augmented))
+    #np.random.shuffle(indices)
+    #x_test_augmented = x_test_augmented[indices]
+    #y_test_augmented = y_test_augmented[indices]
+    
+    x_train = x_train_augmented
+    y_train = y_train_augmented
+    x_test = x_test_augmented
+    y_test = y_test_augmented
+
+    #import pdb; pdb.set_trace()
 
     return (x_train, y_train), (x_test, y_test)
-
 # Example usage:
 # (x_train, y_train), (x_test, y_test) = load_terra('path/to/terraset6')
 
