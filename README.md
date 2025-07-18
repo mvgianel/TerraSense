@@ -1,4 +1,4 @@
-# TerraSense - AMD Pervasive AI Developer Contest
+# TerraSense
 
 ![alt text](https://github.com/mvgianel/TerraSense-AMD-Contest/blob/main/src/imgs/TerraSenseGraphPaper.png)
 
@@ -14,7 +14,6 @@ We aim to extend the dataset with more categories but also with more images.
 ### ResNet18 Training on TerraSet
 
 **Disclaimer**: The scripts are originally from the Vitis-AI-Tutorial repo (https://github.com/Xilinx/Vitis-AI-Tutorials/tree/3.5). We have modified them to load, process and augment TerraSet and train the ResNet18 on this dataset.
-We have created this separate repo for the AMD Pervasive AI Developer Contest.
 
 In order to run this example, please follow the tutorial from the Vitis-AI-Tutorial repo with the following changes:
 * The resnet18_terraset folder from this repo needs to be placed in the Vitis-AI-Tutorial/Tutorials/ folder.
