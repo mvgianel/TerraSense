@@ -43,25 +43,22 @@ import os
 import numpy as np
 import pandas as pd
 from datetime import datetime
-
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics import classification_report
-
 from keras.utils import np_utils
-
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import datasets,models,layers
 from tensorflow.keras.utils import plot_model,  to_categorical
-#from tensorflow.keras.datasets import cifar10
-from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.layers import Dense, Conv2D,  MaxPool2D, Flatten, GlobalAveragePooling2D,  BatchNormalization, Layer, Add
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.optimizers import SGD
-
 from classification_models.keras import Classifiers
+import tensorflow_addons as tfa
 
+from sklearn.model_selection import KFold
 
 # ==========================================================================================
 # Get Input Arguments
@@ -113,7 +110,7 @@ BATCH_SIZE = args["batch_size"] #32
 print("\n[DB INFO] Loading Data for Training and Test...\n")
 
 ##ToDo add these to parameters
-def load_terraset6(dataset_path, img_height=224, img_width=224, batch_size=32, validation_split=0.2, seed=123):
+def load_terraset6(dataset_path, img_height=224, img_width=224, batch_size=32, validation_split=0.2, testing_split=0.2, seed=123):
     """
     Load, augment, and preprocess the terraset6 dataset.
 
@@ -144,10 +141,20 @@ def load_terraset6(dataset_path, img_height=224, img_width=224, batch_size=32, v
         #import pdb; pdb.set_trace()
         image = tf.image.random_crop(image, size=[img_height, img_width, 3])
         return image, label
+        
+    def central_crop(image, label):
+        cropped = tf.image.central_crop(image, central_fraction=0.8)
+        image = tf.image.resize(cropped, tf.shape(image)[0:2])
+        return image, label
 
-    # Function to apply random flip
-    def random_flip(image, label):
+    # Function to apply random flip left right
+    def random_flip_left_right(image, label):
         image = tf.image.random_flip_left_right(image)
+        return image, label
+        
+    # Function to apply random flip left right
+    def random_flip_up_down(image, label):
+        image = tf.image.random_flip_up_down(image)
         return image, label
 
     # Function to apply random brightness adjustment
@@ -170,22 +177,44 @@ def load_terraset6(dataset_path, img_height=224, img_width=224, batch_size=32, v
         image = tf.image.resize_with_crop_or_pad(image, target_height=img_height, target_width=img_width)
         return image, label
 
-    def random_contrast(image, label):
-        
+    def random_contrast(image, label):  
         image = tf.image.random_contrast(image, lower=0.8, upper=1.2)
-        
         return image, label
 
     def random_saturation(image, label):
-        
         image = tf.image.random_saturation(image, lower=0.8, upper=1.2)
-        
         return image, label
 
     def random_hue(image, label):
-        
         image = tf.image.random_hue(image, max_delta=0.2)
+        return image, label
         
+    def adjust_gamma(image, label):
+        image = tf.image.adjust_gamma(image, gamma=0.8)
+        return image, label
+        
+    def random_blur(image, label):
+        image = tfa.image.gaussian_filter2d(image, sigma=1.0)
+        return image, label
+        
+    def sharpen(image, label):
+        image = tfa.image.sharpness(image, factor=2.0)
+        return image, label
+        
+    def shift_left(image, label):
+        image = tf.roll(image, shift=-10, axis=1)
+        return image, label
+        
+    def shift_right(image, label):
+        image = tf.roll(image, shift=10, axis=1)
+        return image, label
+        
+    def shift_up(image, label):
+        image = tf.roll(image, shift=-10, axis=0)
+        return image, label
+        
+    def shift_down(image, label):
+        image = tf.roll(image, shift=10, axis=0)
         return image, label
 
     unbatched_dataset=dataset.unbatch()
@@ -200,98 +229,98 @@ def load_terraset6(dataset_path, img_height=224, img_width=224, batch_size=32, v
         return np.array(images), np.array(labels)
         
     x_original, y_original = dataset_to_numpy(unbatched_dataset)
-    
-    # Shuffle and split before the augmentation
-    # Shuffle the original dataset
-    #indices = np.arange(len(x_original))
-    #np.random.shuffle(indices)
-    #x_original = x_original[indices]
-    #y_original = y_original[indices]
 
-    # Split the dataset into training and validation sets
-    split_index = int((1 - validation_split) * len(x_original))
+    # Split the dataset into training and validation/testing sets
+    split_index = int((1 - (validation_split + testing_split)) * len(x_original))
     x_train, y_train = x_original[:split_index], y_original[:split_index]
-    x_test, y_test = x_original[split_index:], y_original[split_index:]
+    x_valtest, y_valtest = x_original[split_index:], y_original[split_index:]
+    
+    # Split the valtest dataset into validation and testing sets (case of validation split=testing split needs to be updated)
+    split_index = int((1 - 0.5) * len(x_valtest))
+    x_val, y_val = x_valtest[:split_index], y_valtest[:split_index]
+    x_test, y_test = x_valtest[split_index:], y_valtest[split_index:]
+    
     
     print("Size of training dataset before augmentation", len(x_train))
+    print("Size of validation dataset before augmentation", len(x_val))
     print("Size of testing dataset before augmentation", len(x_test))
-    print("Size of training + testing dataset before augmentation", (len(x_train)+len(x_test)))
+    print("Size of training + validating + testing dataset before augmentation", (len(x_train)+ len(x_val) +len(x_test)))
     
     # Convert numpy arrays back to tf.data.Dataset
     def numpy_to_dataset(x, y):
         return tf.data.Dataset.from_tensor_slices((x,y))
         
     training_dataset = numpy_to_dataset(x_train, y_train)
+    val_dataset = numpy_to_dataset(x_val, y_val)
     testing_dataset = numpy_to_dataset(x_test, y_test)
+    
+    augmentation_functions = [random_crop, random_brightness, random_rotation, random_zoom, random_contrast, random_saturation, random_hue, random_flip_up_down, random_flip_left_right, adjust_gamma, random_blur, central_crop, sharpen, shift_left, shift_right, shift_up, shift_down]
 
-    # Augment each dataset by applying transformations
-    augmented_training_dataset = [training_dataset]
-    for preprocess_func in [random_crop, random_flip, random_brightness, random_rotation, random_zoom, random_contrast, random_saturation, random_hue]:
-        augmented_training_dataset.append(training_dataset.map(preprocess_func, num_parallel_calls=tf.data.AUTOTUNE))
-
-    # Combine original and augmented datasets
-        augmented_training_dataset_full = augmented_training_dataset[0]
-        for aug_ds in augmented_training_dataset[1:]:
-            augmented_training_dataset_full = augmented_training_dataset_full.concatenate(aug_ds)
-
-    # Augment each dataset by applying transformations
-    augmented_testing_dataset = [testing_dataset]
-    for preprocess_func in [random_crop, random_flip, random_brightness, random_rotation, random_zoom, random_contrast, random_saturation, random_hue]:
-        augmented_testing_dataset.append(testing_dataset.map(preprocess_func, num_parallel_calls=tf.data.AUTOTUNE))
-
-    # Combine original and augmented datasets
-        augmented_testing_dataset_full = augmented_testing_dataset[0]
-        for aug_ds in augmented_testing_dataset[1:]:
-            augmented_testing_dataset_full = augmented_testing_dataset_full.concatenate(aug_ds) 
+    def apply_augmentation(dataset, augmentation_functions):
+        augmented_dataset = [dataset]
+        for aug_f in augmentation_functions:
+            augmented_dataset.append(dataset.map(aug_f, num_parallel_calls=tf.data.AUTOTUNE))
+            
+            # Combine original and augmented datasets
+            augmented_dataset_full = augmented_dataset[0]
+            for aug_ds in augmented_dataset[1:]:
+                augmented_dataset_full = augmented_dataset_full.concatenate(aug_ds)
         
-
+        return augmented_dataset_full
+        
+    augmented_training_dataset_full = apply_augmentation(training_dataset, augmentation_functions)
+    augmented_val_dataset_full = apply_augmentation(val_dataset, augmentation_functions)
+    augmented_testing_dataset_full = apply_augmentation(testing_dataset, augmentation_functions)
+    
     # Convert datasets to numpy arrays
     x_train_augmented, y_train_augmented = dataset_to_numpy(augmented_training_dataset_full)
+    x_val_augmented, y_val_augmented = dataset_to_numpy(augmented_val_dataset_full)
     x_test_augmented, y_test_augmented = dataset_to_numpy(augmented_testing_dataset_full)
     
-    print("Size of training dataset after augmentation", len(x_train_augmented))
-    print("Size of testing dataset after augmentation", len(x_test_augmented))
-    print("Size of training + testing dataset after augmentation", (len(x_train_augmented)+len(x_test_augmented)))
-
-    # Shuffle the datasets
-    #indices = np.arange(len(x_train_augmented))
-    #np.random.shuffle(indices)
-    #x_train_augmented = x_train_augmented[indices]
-    #y_train_augmented = y_train_augmented[indices]
     
-    #indices = np.arange(len(x_test_augmented))
-    #np.random.shuffle(indices)
-    #x_test_augmented = x_test_augmented[indices]
-    #y_test_augmented = y_test_augmented[indices]
+    def shuffle_dataset(x, y):
+        indices = np.arange(len(x))
+        np.random.shuffle(indices)
+        x = x[indices]
+        y = y[indices]
+        
+    # Shuffle all datasets so the augmented images mix with the originals
+    shuffle_dataset(x_train_augmented, y_train_augmented)
+    shuffle_dataset(x_val_augmented, y_val_augmented)
+    shuffle_dataset(x_test_augmented, y_test_augmented)
+    
+    
+    print("Size of training dataset after augmentation", len(x_train_augmented))
+    print("Size of val dataset after augmentation", len(x_val_augmented))
+    print("Size of testing dataset after augmentation", len(x_test_augmented))
+    print("Size of training + val + testing dataset after augmentation", (len(x_train_augmented) + len(x_test_augmented) + len(x_val_augmented)))
     
     x_train = x_train_augmented
     y_train = y_train_augmented
+    x_val = x_val_augmented
+    y_val = y_val_augmented
     x_test = x_test_augmented
     y_test = y_test_augmented
 
-    #import pdb; pdb.set_trace()
 
-    return (x_train, y_train), (x_test, y_test)
-# Example usage:
-# (x_train, y_train), (x_test, y_test) = load_terra('path/to/terraset6')
-
-
+    return (x_train, y_train), (x_test, y_test), (x_val, y_val)
+    
+    
 terraset6_dataset = load_terraset6('target/terraset/terraset6')
 
+(X_train, Y_train), (X_test, Y_test), (X_val, Y_val) = terraset6_dataset
 
-(X_train, Y_train), (X_test, Y_test) = terraset6_dataset
-
-#(X_train, Y_train), (X_test, Y_test) = cifar10.load_data()
-X_train.shape, X_test.shape, np.unique(Y_train).shape[0]
+X_train.shape, X_test.shape, X_val.shape, np.unique(Y_train).shape[0]
 # one-hot encoding
 n_classes = cfg.NUM_CLASSES
 
 # Pre-processing & Normalize the data
 X_train = cfg.Normalize(X_train)
 X_test  = cfg.Normalize(X_test)
+X_val  = cfg.Normalize(X_val)
 
-X_train, X_val, Y_train, Y_val = train_test_split(X_train, Y_train, test_size = 0.2,shuffle = True)
-
+#X_train, X_val, Y_train, Y_val = train_test_split(X_train, Y_train, test_size = 0.2,shuffle = True)
+#import pdb; pdb.set_trace()
 #need to reshape in order to apply encoding
 Y_train = Y_train.reshape(-1,1)
 Y_test = Y_test.reshape(-1,1)
@@ -305,112 +334,10 @@ Y_test = encoder.transform(Y_test).toarray()
 Y_val =  encoder.transform(Y_val).toarray()
 
 # data augmentation
-from keras.preprocessing.image import ImageDataGenerator
-aug = ImageDataGenerator(horizontal_flip=True, width_shift_range=0.05,
-                         height_shift_range=0.05)
-aug.fit(X_train)
-
-
-# ==========================================================================================
-"""
-ResNet-18
-Reference:
-[1] K. He et al. Deep Residual Learning for Image Recognition. CVPR, 2016
-[2] K. He, X. Zhang, S. Ren, and J. Sun. Delving deep into rectifiers:
-Surpassing human-level performance on imagenet classification. In
-ICCV, 2015.
-"""
-
-# WARNING
-# This Subclassed Model cannot be save in HDF5 format, which is what Vitis AI Quantizer requires
-# see Table 17 from UG1414
-
-"""
-class ResnetBlock(Model):
-    # A standard resnet block.
-
-    def __init__(self, channels: int, down_sample=False):
-        #channels: same as number of convolution kernels
-        super().__init__()
-
-        self.__channels = channels
-        self.__down_sample = down_sample
-        self.__strides = [2, 1] if down_sample else [1, 1]
-
-        KERNEL_SIZE = (3, 3)
-        # use He initialization, instead of Xavier (a.k.a "glorot_uniform" in Keras), as suggested in [2]
-        INIT_SCHEME = "he_normal"
-
-        self.conv_1 = Conv2D(self.__channels, strides=self.__strides[0],
-                             kernel_size=KERNEL_SIZE, padding="same", kernel_initializer=INIT_SCHEME)
-        self.bn_1 = BatchNormalization()
-        self.conv_2 = Conv2D(self.__channels, strides=self.__strides[1],
-                             kernel_size=KERNEL_SIZE, padding="same", kernel_initializer=INIT_SCHEME)
-        self.bn_2 = BatchNormalization()
-        self.merge = Add()
-
-        if self.__down_sample:
-            # perform down sampling using stride of 2, according to [1].
-            self.res_conv = Conv2D(
-                self.__channels, strides=2, kernel_size=(1, 1), kernel_initializer=INIT_SCHEME, padding="same")
-            self.res_bn = BatchNormalization()
-
-    def call(self, inputs):
-        res = inputs
-
-        x = self.conv_1(inputs)
-        x = self.bn_1(x)
-        x = tf.nn.relu(x)
-        x = self.conv_2(x)
-        x = self.bn_2(x)
-
-        if self.__down_sample:
-            res = self.res_conv(res)
-            res = self.res_bn(res)
-
-        # if not perform down sample, then add a shortcut directly
-        x = self.merge([x, res])
-        out = tf.nn.relu(x)
-        return out
-
-
-class ResNet18(Model):
-
-    def __init__(self, num_classes, **kwargs):
-        #num_classes: number of classes in specific classification task.
-
-        super().__init__(**kwargs)
-        self.conv_1 = Conv2D(64, (7, 7), strides=2,
-                             padding="same", kernel_initializer="he_normal")
-        self.init_bn = BatchNormalization()
-        self.pool_2 = MaxPool2D(pool_size=(2, 2), strides=2, padding="same")
-        self.res_1_1 = ResnetBlock(64)
-        self.res_1_2 = ResnetBlock(64)
-        self.res_2_1 = ResnetBlock(128, down_sample=True)
-        self.res_2_2 = ResnetBlock(128)
-        self.res_3_1 = ResnetBlock(256, down_sample=True)
-        self.res_3_2 = ResnetBlock(256)
-        self.res_4_1 = ResnetBlock(512, down_sample=True)
-        self.res_4_2 = ResnetBlock(512)
-        self.avg_pool = GlobalAveragePooling2D()
-        self.flat = Flatten()
-        self.fc = Dense(num_classes, activation="softmax")
-
-    def call(self, inputs):
-        out = self.conv_1(inputs)
-        out = self.init_bn(out)
-        out = tf.nn.relu(out)
-        out = self.pool_2(out)
-        for res_block in [self.res_1_1, self.res_1_2, self.res_2_1, self.res_2_2, self.res_3_1, self.res_3_2, self.res_4_1, self.res_4_2]:
-            out = res_block(out)
-        out = self.avg_pool(out)
-        out = self.flat(out)
-        out = self.fc(out)
-        return out
-
-"""
-# ==========================================================================================
-
+#from keras.preprocessing.image import ImageDataGenerator
+#aug = ImageDataGenerator(horizontal_flip=True, width_shift_range=0.05,
+#                         height_shift_range=0.05)
+#aug.fit(X_train)
 
 # ==========================================================================================
 # Get ResNet18 pre-trained model
@@ -422,7 +349,6 @@ ResNet18, preprocess_input = Classifiers.get("resnet18")
 #orig_model = ResNet18((224, 224, 3), weights="imagenet")
 #print(orig_model.summary())
 
-
 # build new model for Terraset6
 #base_model = ResNet18(input_shape=(32,32,3), weights="imagenet", include_top=False)
 #use model without pre-trained weights to learn from scratch on TerraSet6
@@ -430,13 +356,7 @@ base_model = ResNet18(input_shape=(224,224,3), weights=None, include_top=False)
 #next to lines commented: the training would become awful
 ##for layer in base_model.layers:
 ##    layer.trainable = False
-"""
-dict_keys(["loss", "accuracy", "val_loss", "val_accuracy"])
-X_Train Model Loss is     2.185528039932251
-X_Train Model Accuracy is 0.2323250025510788
-X_Test Model Loss is      2.185682535171509
-X_Test Model Accuracy is  0.23180000483989716
-"""
+
 x = keras.layers.GlobalAveragePooling2D()(base_model.output)
 output = keras.layers.Dense(n_classes, activation="softmax")(x)
 model = keras.models.Model(inputs=[base_model.input], outputs=[output])
@@ -448,6 +368,7 @@ model = keras.models.Model(inputs=[base_model.input], outputs=[output])
 print("\n[DB INFO] CallBack Functions ...\n")
 es = EarlyStopping(patience= 8, restore_best_weights=True, monitor="val_accuracy")
 
+#lr_scheduler = ReduceLROnPlateau( monitor="val_accuracy", factor=0.5, patience=4, verbose=1, min_lr=1e-6)
 
 # ==========================================================================================
 # Training for 50 epochs on Terraset    
@@ -460,11 +381,10 @@ model.compile(optimizer = "adam",loss="categorical_crossentropy", metrics=["accu
 
 
 #I did not use cross validation, so the validate performance is not accurate.
-STEPS = len(X_train) // BATCH_SIZE
 startTime1 = datetime.now() #DB
-history = model.fit(aug.flow(X_train,Y_train,batch_size = BATCH_SIZE),
-                    steps_per_epoch=STEPS, batch_size = BATCH_SIZE, epochs=NUM_EPOCHS,
-                    validation_data=(X_train, Y_train),callbacks=[es])
+history = model.fit(X_train,Y_train,
+                    batch_size = BATCH_SIZE, epochs=NUM_EPOCHS,
+                    validation_data=(X_val, Y_val),callbacks=[es])
 endTime1 = datetime.now()
 diff1 = endTime1 - startTime1
 print("\n")

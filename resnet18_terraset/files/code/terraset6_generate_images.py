@@ -71,7 +71,7 @@ imgList = list()
 # Each image is 32x32x3ch with 8bits x 1ch
 
 ##ToDo add these to parameters
-def load_terraset6(dataset_path, img_height=224, img_width=224, batch_size=32, validation_split=0.2, seed=123):
+def load_terraset6(dataset_path, img_height=224, img_width=224, batch_size=32, validation_split=0.2, testing_split=0.2, seed=123):
     """
     Load, augment, and preprocess the terraset6 dataset.
 
@@ -102,10 +102,20 @@ def load_terraset6(dataset_path, img_height=224, img_width=224, batch_size=32, v
         #import pdb; pdb.set_trace()
         image = tf.image.random_crop(image, size=[img_height, img_width, 3])
         return image, label
+        
+    def central_crop(image, label):
+        cropped = tf.image.central_crop(image, central_fraction=0.8)
+        image = tf.image.resize(cropped, tf.shape(image)[0:2])
+        return image, label
 
-    # Function to apply random flip
-    def random_flip(image, label):
+    # Function to apply random flip left right
+    def random_flip_left_right(image, label):
         image = tf.image.random_flip_left_right(image)
+        return image, label
+        
+    # Function to apply random flip left right
+    def random_flip_up_down(image, label):
+        image = tf.image.random_flip_up_down(image)
         return image, label
 
     # Function to apply random brightness adjustment
@@ -128,22 +138,44 @@ def load_terraset6(dataset_path, img_height=224, img_width=224, batch_size=32, v
         image = tf.image.resize_with_crop_or_pad(image, target_height=img_height, target_width=img_width)
         return image, label
 
-    def random_contrast(image, label):
-        
+    def random_contrast(image, label):  
         image = tf.image.random_contrast(image, lower=0.8, upper=1.2)
-        
         return image, label
 
     def random_saturation(image, label):
-        
         image = tf.image.random_saturation(image, lower=0.8, upper=1.2)
-        
         return image, label
 
     def random_hue(image, label):
-        
         image = tf.image.random_hue(image, max_delta=0.2)
+        return image, label
         
+    def adjust_gamma(image, label):
+        image = tf.image.adjust_gamma(image, gamma=0.8)
+        return image, label
+        
+    def random_blur(image, label):
+        image = tfa.image.gaussian_filter2d(image, sigma=1.0)
+        return image, label
+        
+    def sharpen(image, label):
+        image = tfa.image.sharpness(image, factor=2.0)
+        return image, label
+        
+    def shift_left(image, label):
+        image = tf.roll(image, shift=-10, axis=1)
+        return image, label
+        
+    def shift_right(image, label):
+        image = tf.roll(image, shift=10, axis=1)
+        return image, label
+        
+    def shift_up(image, label):
+        image = tf.roll(image, shift=-10, axis=0)
+        return image, label
+        
+    def shift_down(image, label):
+        image = tf.roll(image, shift=10, axis=0)
         return image, label
 
     unbatched_dataset=dataset.unbatch()
@@ -158,87 +190,86 @@ def load_terraset6(dataset_path, img_height=224, img_width=224, batch_size=32, v
         return np.array(images), np.array(labels)
         
     x_original, y_original = dataset_to_numpy(unbatched_dataset)
-    
-    # Shuffle and split before the augmentation
-    # Shuffle the original dataset
-    #indices = np.arange(len(x_original))
-    #np.random.shuffle(indices)
-    #x_original = x_original[indices]
-    #y_original = y_original[indices]
 
-    # Split the dataset into training and validation sets
-    split_index = int((1 - validation_split) * len(x_original))
+    # Split the dataset into training and validation/testing sets
+    split_index = int((1 - (validation_split + testing_split)) * len(x_original))
     x_train, y_train = x_original[:split_index], y_original[:split_index]
-    x_test, y_test = x_original[split_index:], y_original[split_index:]
+    x_valtest, y_valtest = x_original[split_index:], y_original[split_index:]
+    
+    # Split the valtest dataset into validation and testing sets (case of validation split=testing split needs to be updated)
+    split_index = int((1 - 0.5) * len(x_valtest))
+    x_val, y_val = x_valtest[:split_index], y_valtest[:split_index]
+    x_test, y_test = x_valtest[split_index:], y_valtest[split_index:]
+    
     
     print("Size of training dataset before augmentation", len(x_train))
+    print("Size of validation dataset before augmentation", len(x_val))
     print("Size of testing dataset before augmentation", len(x_test))
-    print("Size of training + testing dataset before augmentation", (len(x_train)+len(x_test)))
+    print("Size of training + validating + testing dataset before augmentation", (len(x_train)+ len(x_val) +len(x_test)))
     
     # Convert numpy arrays back to tf.data.Dataset
     def numpy_to_dataset(x, y):
         return tf.data.Dataset.from_tensor_slices((x,y))
         
     training_dataset = numpy_to_dataset(x_train, y_train)
+    val_dataset = numpy_to_dataset(x_val, y_val)
     testing_dataset = numpy_to_dataset(x_test, y_test)
+    
+    augmentation_functions = [random_crop, random_brightness, random_rotation, random_zoom, random_contrast, random_saturation, random_hue, random_flip_up_down, random_flip_left_right, adjust_gamma, random_blur, central_crop, sharpen, shift_left, shift_right, shift_up, shift_down]
 
-    # Augment each dataset by applying transformations
-    augmented_training_dataset = [training_dataset]
-    for preprocess_func in [random_crop, random_flip, random_brightness, random_rotation, random_zoom, random_contrast, random_saturation, random_hue]:
-        augmented_training_dataset.append(training_dataset.map(preprocess_func, num_parallel_calls=tf.data.AUTOTUNE))
-
-    # Combine original and augmented datasets
-        augmented_training_dataset_full = augmented_training_dataset[0]
-        for aug_ds in augmented_training_dataset[1:]:
-            augmented_training_dataset_full = augmented_training_dataset_full.concatenate(aug_ds)
-
-    # Augment each dataset by applying transformations
-    augmented_testing_dataset = [testing_dataset]
-    for preprocess_func in [random_crop, random_flip, random_brightness, random_rotation, random_zoom, random_contrast, random_saturation, random_hue]:
-        augmented_testing_dataset.append(testing_dataset.map(preprocess_func, num_parallel_calls=tf.data.AUTOTUNE))
-
-    # Combine original and augmented datasets
-        augmented_testing_dataset_full = augmented_testing_dataset[0]
-        for aug_ds in augmented_testing_dataset[1:]:
-            augmented_testing_dataset_full = augmented_testing_dataset_full.concatenate(aug_ds) 
+    def apply_augmentation(dataset, augmentation_functions):
+        augmented_dataset = [dataset]
+        for aug_f in augmentation_functions:
+            augmented_dataset.append(dataset.map(aug_f, num_parallel_calls=tf.data.AUTOTUNE))
+            
+            # Combine original and augmented datasets
+            augmented_dataset_full = augmented_dataset[0]
+            for aug_ds in augmented_dataset[1:]:
+                augmented_dataset_full = augmented_dataset_full.concatenate(aug_ds)
         
-
+        return augmented_dataset_full
+        
+    augmented_training_dataset_full = apply_augmentation(training_dataset, augmentation_functions)
+    augmented_val_dataset_full = apply_augmentation(val_dataset, augmentation_functions)
+    augmented_testing_dataset_full = apply_augmentation(testing_dataset, augmentation_functions)
+    
     # Convert datasets to numpy arrays
     x_train_augmented, y_train_augmented = dataset_to_numpy(augmented_training_dataset_full)
+    x_val_augmented, y_val_augmented = dataset_to_numpy(augmented_val_dataset_full)
     x_test_augmented, y_test_augmented = dataset_to_numpy(augmented_testing_dataset_full)
     
-    print("Size of training dataset after augmentation", len(x_train_augmented))
-    print("Size of testing dataset after augmentation", len(x_test_augmented))
-    print("Size of training + testing dataset after augmentation", (len(x_train_augmented)+len(x_test_augmented)))
-
-    # Shuffle the datasets
-    #indices = np.arange(len(x_train_augmented))
-    #np.random.shuffle(indices)
-    #x_train_augmented = x_train_augmented[indices]
-    #y_train_augmented = y_train_augmented[indices]
     
-    #indices = np.arange(len(x_test_augmented))
-    #np.random.shuffle(indices)
-    #x_test_augmented = x_test_augmented[indices]
-    #y_test_augmented = y_test_augmented[indices]
+    def shuffle_dataset(x, y):
+        indices = np.arange(len(x))
+        np.random.shuffle(indices)
+        x = x[indices]
+        y = y[indices]
+        
+    # Shuffle all datasets so the augmented images mix with the originals
+    shuffle_dataset(x_train_augmented, y_train_augmented)
+    shuffle_dataset(x_val_augmented, y_val_augmented)
+    shuffle_dataset(x_test_augmented, y_test_augmented)
+    
+    
+    print("Size of training dataset after augmentation", len(x_train_augmented))
+    print("Size of val dataset after augmentation", len(x_val_augmented))
+    print("Size of testing dataset after augmentation", len(x_test_augmented))
+    print("Size of training + val + testing dataset after augmentation", (len(x_train_augmented) + len(x_test_augmented) + len(x_val_augmented)))
     
     x_train = x_train_augmented
     y_train = y_train_augmented
+    x_val = x_val_augmented
+    y_val = y_val_augmented
     x_test = x_test_augmented
     y_test = y_test_augmented
 
-    return (x_train, y_train), (x_test, y_test)
 
-# Example usage:
-# (x_train, y_train), (x_test, y_test) = load_terra('path/to/terraset6')
-
-
-
+    return (x_train, y_train), (x_test, y_test), (x_val, y_val)
+    
+    
 terraset6_dataset = load_terraset6('target/terraset/terraset6')
 
-(x_train, y_train), (x_test, y_test) = terraset6_dataset
-print("{n} images in original train dataset".format(n=x_train.shape[0]))
-print("{n} images in original test  dataset".format(n=x_test.shape[0]))
+(X_train, Y_train), (X_test, Y_test), (X_val, Y_val) = terraset6_dataset
 
 
 ########################################################################################

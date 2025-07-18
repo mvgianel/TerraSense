@@ -142,6 +142,20 @@ python  ./code/vai_q_resnet18_terraset6.py   --float_file ./build/float/train2_r
 }
 
 # ===========================================================================
+# STEP3&4: Train ResNet18 CNNs on Terraset6 & Vitis AI Quantization of ResNet18
+# ===========================================================================
+run_terraset6_training_and_quantization(){
+# floating point model training
+echo "----------------------------------------------------------------------------------"
+echo "[DB INFO STEP3B] Terraset6 TRAINING (way 2) and QUANTIZE Terraset6 TRAINED CNN2 MODEL"
+echo "----------------------------------------------------------------------------------"
+echo " "
+python ./code/resnet18_terraset6_train_and_quantize.py --epochs 50 --float_file ./build/float/train2_resnet18_terraset6_float.h5 --quant_file ./build/quantized/q_train2_resnet18_terraset6.h5 | tee ./build/log/train2_resnet18_terraset6.log 
+echo " "
+}
+
+
+# ===========================================================================
 # STEP5: Vitis AI Compile ResNet18 terraset6 for Target Board
 # ===========================================================================
 compile_resnet18_terraset6(){
