@@ -249,7 +249,7 @@ def load_terraset6(dataset_path, img_height=224, img_width=224, batch_size=32, v
     x_train, y_train = x_original[:split_index], y_original[:split_index]
     x_valtest, y_valtest = x_original[split_index:], y_original[split_index:]
     
-    # Split the valtest dataset into validation and testing sets (case of validation split=testing split needs to be updated)
+    # Split the valtest dataset into validation and testing sets (case of validation split=testing split - this needs to be updated and not harcoded)
     split_index = int((1 - 0.5) * len(x_valtest))
     x_val, y_val = x_valtest[:split_index], y_valtest[:split_index]
     x_test, y_test = x_valtest[split_index:], y_valtest[split_index:]
@@ -372,7 +372,7 @@ model = keras.models.Model(inputs=[base_model.input], outputs=[output])
 print("\n[DB INFO] CallBack Functions ...\n")
 es = EarlyStopping(patience= 8, restore_best_weights=True, monitor="val_accuracy")
 
-#lr_scheduler = ReduceLROnPlateau( monitor="val_accuracy", factor=0.5, patience=4, verbose=1, min_lr=1e-6)
+lr_scheduler = ReduceLROnPlateau( monitor="val_accuracy", factor=0.5, patience=8, verbose=1, min_lr=1e-6)
 
 # ==========================================================================================
 # Training for 50 epochs on Terraset    
@@ -388,7 +388,7 @@ model.compile(optimizer = "adam",loss="categorical_crossentropy", metrics=["accu
 startTime1 = datetime.now() #DB
 history = model.fit(X_train,Y_train,
                     batch_size = BATCH_SIZE, epochs=NUM_EPOCHS,
-                    validation_data=(X_val, Y_val),callbacks=[es])
+                    validation_data=(X_val, Y_val),callbacks=[es, lr_scheduler])
 endTime1 = datetime.now()
 diff1 = endTime1 - startTime1
 print("\n")
