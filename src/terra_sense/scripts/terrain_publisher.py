@@ -43,13 +43,14 @@ class MLPublisher(Node):
         # Create DPU runner
         self.dpu = self.overlay.runner
         self.get_logger().info('[INFO] __init__ exiting...')
+        self.get_logger().info('========== Starting classification ==========')
 
     def calculate_softmax(self, data):
         result = np.exp(data)
         return result
 
     def listener_callback(self, msg):
-        self.get_logger().info("Starting of listener callback...")
+        #self.get_logger().info("Starting of listener callback...")
         bridge = CvBridge()
         cv2_image_org = bridge.imgmsg_to_cv2(msg,desired_encoding="rgb8")
         y1 = (128)
@@ -81,8 +82,10 @@ class MLPublisher(Node):
         softmax = self.calculate_softmax(temp[0][0])
         prediction = softmax.argmax()
 
-        self.get_logger().info("prediction="+str(prediction))
-        self.publisher_.publish(str(prediction))
+        #self.get_logger().info("prediction="+str(prediction))
+        msg = String()
+        msg.data = str(prediction)
+        self.publisher_.publish(msg)
 
         # # Calculate ROI center
         # roi_center_x = (x1 + x2) / 2
