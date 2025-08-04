@@ -15,10 +15,14 @@ namespace terra_sense
 {
 
 TerrainLayer::TerrainLayer()
-: last_min_x_(-std::numeric_limits<float>::max()),
+: Layer(),
+  terrain_(),
+  terrain_cost_(NO_INFORMATION),
+  need_recalculation_(true),
+  last_min_x_(-std::numeric_limits<float>::max()),
   last_min_y_(-std::numeric_limits<float>::max()),
-  last_max_x_(std::numeric_limits<float>::max()),
-  last_max_y_(std::numeric_limits<float>::max())
+  last_max_x_( std::numeric_limits<float>::max()),
+  last_max_y_( std::numeric_limits<float>::max())
 {}
 
 void TerrainLayer::onInitialize()
@@ -34,9 +38,11 @@ void TerrainLayer::onInitialize()
   terrain_subscription_ = node->create_subscription<std_msgs::msg::String>(
     "/terrain_class", 10, std::bind(&TerrainLayer::terrainCallback, this, std::placeholders::_1));
   cost_publisher_ = node->create_publisher<std_msgs::msg::String>("/cost_changes",40);
+
+  RCLCPP_INFO(node->get_logger(), "TerrainLayer initialized");
   
-  current_ = true;
-  need_recalculation_ = false;
+  // current_ = true;
+  // need_recalculation_ = false;
 }
 
 void TerrainLayer::onFootprintChanged()
@@ -46,32 +52,27 @@ void TerrainLayer::onFootprintChanged()
   RCLCPP_DEBUG(rclcpp::get_logger("nav2_costmap_2d"), "TerrainLayer::onFootprintChanged(): num footprint points: %lu", layered_costmap_->getFootprint().size());
 }
 
-void TerrainLayer::updateBounds(double origin_x, double origin_y, double origin_yaw, double* min_x, double* min_y, double* max_x, double* max_y)
+void TerrainLayer::updateBounds(double /*robot_x*/, double /*robot_y*/, double /*robot_yaw*/,
+  double *min_x, double *min_y, double *max_x, double *max_y)
 {
-  if (need_recalculation_) {
-    last_min_x_ = *min_x;
-    last_min_y_ = *min_y;
-    last_max_x_ = *max_x;
-    last_max_y_ = *max_y;
-    *min_x = -std::numeric_limits<float>::max();
-    *min_y = -std::numeric_limits<float>::max();
-    *max_x = std::numeric_limits<float>::max();
-    *max_y = std::numeric_limits<float>::max();
+    if (need_recalculation_) {
+    // get the real costmap extents
+    auto cm = layered_costmap_->getCostmap();
+    double map_ox = cm->getOriginX();
+    double map_oy = cm->getOriginY();
+    double map_ex = map_ox + cm->getSizeInMetersX();
+    double map_ey = map_oy + cm->getSizeInMetersY();
+
+    // merge (minimize/​maximize) rather than overwrite
+    *min_x = std::min(*min_x, map_ox);
+    *min_y = std::min(*min_y, map_oy);
+    *max_x = std::max(*max_x, map_ex);
+    *max_y = std::max(*max_y, map_ey);
+
     need_recalculation_ = false;
-  } else {
-    double tmp_min_x = last_min_x_;
-    double tmp_min_y = last_min_y_;
-    double tmp_max_x = last_max_x_;
-    double tmp_max_y = last_max_y_;
-    last_min_x_ = *min_x;
-    last_min_y_ = *min_y;
-    last_max_x_ = *max_x;
-    last_max_y_ = *max_y;
-    *min_x = std::min(tmp_min_x, *min_x);
-    *min_y = std::min(tmp_min_y, *min_y);
-    *max_x = std::max(tmp_max_x, *max_x);
-    *max_y = std::max(tmp_max_y, *max_y);
+
   }
+
 }
 
 void TerrainLayer::updateCosts(nav2_costmap_2d::Costmap2D& master_grid, int min_i, int min_j, int max_i, int max_j)
@@ -86,13 +87,23 @@ void TerrainLayer::updateCosts(nav2_costmap_2d::Costmap2D& master_grid, int min_
 
   min_i = std::max(0, min_i);
   min_j = std::max(0, min_j);
-  max_i = std::min(static_cast<int>(size_x), max_i);
-  max_j = std::min(static_cast<int>(size_y), max_j);
+  max_i = std::min(max_i, static_cast<int>(master_grid.getSizeInCellsX()));
+  max_j = std::min(max_j, static_cast<int>(master_grid.getSizeInCellsY()));
 
   for (int i = min_i; i < max_i; ++i) {
     for (int j = min_j; j < max_j; ++j) {
       unsigned char old_cost = master_grid.getCost(i, j);
       unsigned char new_cost = old_cost + terrain_cost_;
+
+      if (terrain_cost_ == LETHAL_OBSTACLE) {
+        // override to lethal
+        new_cost = LETHAL_OBSTACLE;
+      } else if (terrain_cost_ != NO_INFORMATION) {
+        // additive, but clamp at lethal
+        int sum = static_cast<int>(old_cost) + static_cast<int>(terrain_cost_);
+        new_cost = static_cast<unsigned char>(std::min(sum, static_cast<int>(LETHAL_OBSTACLE)));
+      }
+
       master_grid.setCost(i, j, new_cost);
 
       std_msgs::msg::String msg;
@@ -112,6 +123,7 @@ void TerrainLayer::updateCosts(nav2_costmap_2d::Costmap2D& master_grid, int min_
 
 void TerrainLayer::terrainCallback(const std_msgs::msg::String::SharedPtr msg)
 {
+  // ignore if same terrain
   if(msg->data == terrain_)
     return;
 
@@ -128,6 +140,8 @@ void TerrainLayer::terrainCallback(const std_msgs::msg::String::SharedPtr msg)
   }
 
   // RCLCPP_INFO(rclcpp::get_logger("TerrainLayer"), "Terrain cost: '%d'", terrain_cost_);
+  // force a full repaint
+  need_recalculation_ = true;
 }
 
 }  // namespace terra_sense
