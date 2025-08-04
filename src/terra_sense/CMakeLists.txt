@@ -88,6 +88,7 @@ ament_python_install_package(${PROJECT_NAME})
 
 install(PROGRAMS
   scripts/terrain_publisher.py
+  scripts/terrain_publisher_cpu.py
   scripts/speed_adjust.py
   DESTINATION lib/${PROJECT_NAME}
 )
