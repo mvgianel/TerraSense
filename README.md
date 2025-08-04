@@ -26,5 +26,41 @@ In order to run this example, please follow the tutorial from the Vitis-AI-Tutor
 
 These scrips build the augmented dataset, train ResNet18 (wihout pre-training) and quantize and compile the model for deployment on the DPU. The .xmodel can be found in the build folder.
 
+## ROS2 TerraSense Package
+
+### Installation
+#### Simulation Instalation
+* Ros-humble needs to be installed on a laptop
+* Follow this guide to prepare the Kria https://github.com/amd/Kria-RoboticsAI?tab=readme-ov-file
+* Clone repository into your workspace (if you followed the Kria RobotisAI guide, this should be called ros2_ws/src)
+* In your workspace (ros_w) run the commands
+````
+rosdep init
+rosdep update
+apt install ros-humble-imu-filter-madgwick
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+````
+#### To run on a robot
+
+### Running the code
+To run just the inference on the FPGA use the command
+````
+ros2 run terra_sense terrain_publisher.py
+````
+To run just the inferrence on the CPU use the command 
+````
+ros2 run terra_sense terrain_publisher_cpu.py
+````
+If you have rosbags, you can run them 
+````
+ros2 bag play <rosbag_folder>
+````
+To run the inference plus necessary nodes for robot operation use
+````
+ros2 launch terra_sense terrasense_kria.launch.py launch_terra_sense:=true 
+````
 
   
