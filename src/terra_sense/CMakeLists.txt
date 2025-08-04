@@ -50,6 +50,7 @@ add_library(${lib_name}  SHARED
 # Cpp
 include_directories(
   include
+  ${nav2_costmap_2d_INCLUDE_DIRS}
 )
 
 install(TARGETS ${lib_name}
@@ -58,8 +59,17 @@ DESTINATION lib
 # DIRECTORY
 # FILES
 
-pluginlib_export_plugin_description_file(nav2_costmap_2d terrain_layer.xml)
+# target_link_libraries(terra_sense_core PUBLIC
+#   nav2_costmap_2d::filters
+#   nav2_costmap_2d::layers
+#   nav2_costmap_2d::nav2_costmap_2d_client
+#   nav2_costmap_2d::nav2_costmap_2d_core
+#   pluginlib::pluginlib
+#   rclcpp::rclcpp
+# )
 ament_target_dependencies(${lib_name} ${dep_pkgs})
+
+pluginlib_export_plugin_description_file(nav2_costmap_2d terrain_layer.xml)
 
 install(
   DIRECTORY 
@@ -79,7 +89,6 @@ ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   scripts/terrain_publisher.py
   scripts/speed_adjust.py
-  scripts/terrain_publisher_cpu.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
