@@ -12,6 +12,7 @@ import os
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from ament_index_python.packages import get_package_share_directory
+import tensorflow as tf
 import time
 from collections import deque
 
@@ -22,16 +23,13 @@ import cv2
 sys.path.append('/usr/lib/python3.10/site-packages')
 sys.path.append('/usr/local/share/pynq-venv/lib/python3.10/site-packages')
 # the above path is needed by pynq_dpu
-from pynq_dpu import DpuOverlay
 
-ml_model = 'zcu102_q_train2_2_resnet18_terraset6_91acc_19jul.h5.xmodel'
+ml_model = 'quantized_resnet18_int8.tflite'
 class_names = ['cobblestonebrick', 'dirtground', 'grass', 'pavement', 'sand', 'stairs']
 
 class MLPublisher(Node):
     def __init__(self):
         super().__init__('ml_publisher')
-
-        # ROS I/O
         self.bridge = CvBridge()
         self.subscriber_ = self.create_subscription(Image, '/camera/camera/color/image_raw', self.listener_callback, 10)
         self.get_logger().info('[INFO] __init__, Create Subscription to rgb image...')
@@ -40,27 +38,16 @@ class MLPublisher(Node):
         # Add terrain distance 
         # self.publisher_ = self.create_publisher(Image, 'terrain_dist', 10)
 
-        # Overlay the DPU and Vitis-AI .xmodel file
-        self.overlay = DpuOverlay("dpu.bit")
+        # Load quantized model
         self.model_path = os.path.join(get_package_share_directory('terra_sense'), 'config', ml_model)
         self.get_logger().info("MODEL="+self.model_path)
-        self.overlay.load_model(self.model_path)    
+        self.interpreter = tf.lite.Interpreter(model_path=self.model_path)
+        self.interpreter.allocate_tensors()
 
-        # Create DPU runner
-        self.dpu = self.overlay.runner
-
-        # IO tensor info
-        inputTensors = self.dpu.get_input_tensors()
-        outputTensors = self.dpu.get_output_tensors()
-
-        self.shapeIn = tuple(inputTensors[0].dims)
-        self.shapeOut = tuple(outputTensors[0].dims)
-        self.batch    = self.shapeIn[0]
-        self.inH, self.inW = self.shapeIn[1], self.shapeIn[2]
-        self.outputSize = int(outputTensors[0].get_data_size() / self.shapeIn[0])
-
-        self.output_data = [np.empty(self.shapeOut, dtype=np.float32, order="C")]
-        self.input_data = [np.empty(self.shapeIn, dtype=np.float32, order="C")]
+        self.input_details  = self.interpreter.get_input_details()
+        self.output_details = self.interpreter.get_output_details()
+        self.in_dtype = self.input_details[0]['dtype']
+        # self.get_logger().info('dtype='+str(self.dtype))
 
         # --- metrics state ---
         self.start_time = time.perf_counter()
@@ -70,103 +57,77 @@ class MLPublisher(Node):
         self.model_ms = []                   # or: deque(maxlen=10000)
         self.end2end_ms = []
         
+        
+        _, self.inH, self.inW, _ = self.input_details[0]['shape']
+        self.in_scale,  self.in_zero  = self.input_details[0]['quantization']   # for input
+        self.out_scale, self.out_zero = self.output_details[0]['quantization']
+        self.get_logger().info(f"Input dtype={self.in_dtype}, q=(scale={self.in_scale}, zp={self.in_zero})")
+        self.get_logger().info(f"Output q=(scale={self.out_scale}, zp={self.out_zero})")
+        self.get_logger().info(f"Model expects (H,W)=({self.inH},{self.inW})")
         self.get_logger().info('[INFO] __init__ exiting...')
-        self.get_logger().info(f"[INFO] Input shape: {self.shapeIn}, Output shape: {self.shapeOut}")
         self.get_logger().info('========== Starting classification ==========')
-
-    def calculate_softmax(self, x):
-        x = x - np.max(x, axis=-1, keepdims=True)
-        return np.exp(x) / np.sum(np.exp(x), axis=-1, keepdims=True)
 
     def normalize(self, image):
         image=image/255.0
         image=image-0.5
         image=image*2
-        # mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-        # std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-        # image = (image - mean) / std
         return image
+    
+    def softmax(self, x):
+        x = x - np.max(x, axis=-1, keepdims=True)
+        return np.exp(x) / np.sum(np.exp(x), axis=-1, keepdims=True)
 
     def listener_callback(self, msg):
         #self.get_logger().info("Starting of listener callback...")
         t_cb_start = time.perf_counter()
         if self.first_msg_time is None:
             self.first_msg_time = t_cb_start
-        
-        # ROS to RBG numboy
+
+        # Preprocess image
         cv2_image_org = self.bridge.imgmsg_to_cv2(msg,desired_encoding="rgb8")
-        resized_image = cv2.resize(cv2_image_org, (224, 224), interpolation=cv2.INTER_LINEAR)
+        cv2_image = cv2.resize(cv2_image_org, (self.inW, self.inH), interpolation=cv2.INTER_LINEAR)
+        cv2_image = np.asarray(cv2_image, dtype=np.float32)
+        cv2_image = self.normalize(cv2_image)
 
-        # Preprocess to match how model was trained
-        preprocessed = self.normalize(resized_image)
+        # Quantized model: map to quantized domain
+        cv2_image_q = np.round(cv2_image / self.in_scale + self.in_zero).astype(self.in_dtype)
+        cv2_image_q = np.expand_dims(cv2_image_q, axis=0)
 
-        # Batch it into the input buffer
-        self.input_data[0][0, ...] = preprocessed
-
-        # Inference on DPU
-         # --- model latency (DPU only) ---
+        # Inference
         t_inf_start = time.perf_counter()
-        job_id = self.dpu.execute_async(self.input_data, self.output_data)
-        self.dpu.wait(job_id)
+        self.interpreter.set_tensor(self.input_details[0]['index'], cv2_image_q)
+        self.interpreter.invoke()
+        raw_output = self.interpreter.get_tensor(self.output_details[0]['index'])[0]
         t_inf_end = time.perf_counter()
         model_ms = (t_inf_end - t_inf_start) * 1e3
         self.model_ms.append(model_ms)
+        # dtype = raw_output.dtype
+        # self.get_logger().info('dtype='+str(dtype))
 
-        # Get top prediction
-        temp = [j.reshape(1, self.outputSize) for j in self.output_data]
-        probs = self.calculate_softmax(temp)
+        # Dequantize Output
+        dequantized = self.out_scale * (raw_output.astype(np.float32) - self.out_zero)
+        # self.get_logger().info("y.dim="+str(dequantized.ndim))
+        # self.get_logger().info("y.shape[-1]="+str(dequantized.shape[-1]))
+
+        # Prediction
+        probs = self.softmax(dequantized)
+        # self.get_logger().info(str(probs))
         predicted_index = np.argmax(probs)
+        # print(f"Dequantized prediction vector: {probabilities}")
+        # print(f"Predicted class index: {predicted_index}")
+        # print(f"Predicted class name: {class_names[predicted_index]}")
 
-        # Publish Data 
         #self.get_logger().info("prediction="+str(prediction))
         msg = String()
         msg.data = class_names[predicted_index]
         self.publisher_.publish(msg)
 
-        # --- end-to-end latency (message arrival -> publish) ---
         t_cb_end = time.perf_counter()
         end2end_ms = (t_cb_end - t_cb_start) * 1e3
         self.end2end_ms.append(end2end_ms)
 
         self.total_frames += 1
         self.last_msg_time = t_cb_end
-        # # Calculate ROI center
-        # roi_center_x = (x1 + x2) / 2
-        # roi_center_y = (y1 + y2) / 2
-
-        # # Assuming you have the camera intrinsic parameters
-        # fx = 500  # Focal length in x direction
-        # fy = 500  # Focal length in y direction
-        # cx = 320  # Principal point x-coordinate
-        # cy = 240  # Principal point y-coordinate
-
-        # # Depth value at the center of the ROI
-        # depth = 1.0  # This should be obtained from a depth sensor or estimation
-
-        # # Calculate the real-world coordinates
-        # real_x = (roi_center_x - cx) * depth / fx
-        # real_y = (roi_center_y - cy) * depth / fy
-        # real_z = depth
-
-        # # Create and publish the terrain location message
-        # terrain_location_msg = PointStamped()
-        # terrain_location_msg.header.frame_id = str(prediction)
-        # terrain_location_msg.point.x = real_x
-        # terrain_location_msg.point.y = real_y
-        # terrain_location_msg.point.z = real_z
-
-        # self.publisher_dist.publish(terrain_location_msg)
-
-
-        # DISPLAY
-        # cv2_bgr_image = cv2.cvtColor(cv2_image_org, cv2.COLOR_RGB2BGR)
-        # cv2.imshow('rosai_demo',cv2_bgr_image)
-        # cv2.waitKey(1)
-
-        # CONVERT BACK TO ROS & PUBLISH
-        # image_ros = bridge.cv2_to_imgmsg(cv2_image)
-        # self.publisher_.publish(image_ros)
-        # self.get_logger().info("published prediction="+str(prediction))
 
     def _report_metrics(self):
         if self.first_msg_time is None or self.last_msg_time is None or self.total_frames == 0:
@@ -196,7 +157,7 @@ class MLPublisher(Node):
             self._report_metrics()   # print FPS/latency once at shutdown
         finally:
             return super().destroy_node()
-        
+
 def main(args=None):
     rclpy.init(args=args)
     node = MLPublisher()
