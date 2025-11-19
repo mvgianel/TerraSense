@@ -13,46 +13,57 @@
 
 // based on https://github.com/ros-navigation/navigation2_tutorials/blob/master/nav2_gradient_costmap_plugin/include/nav2_gradient_costmap_plugin/gradient_layer.hpp
 
+
+using nav2_costmap_2d::LETHAL_OBSTACLE;
+using nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE;
+using nav2_costmap_2d::NO_INFORMATION;
+using nav2_costmap_2d::FREE_SPACE;
+
 namespace terra_sense
 {
 
 class TerrainLayer : public nav2_costmap_2d::Layer
 {
   public:
-    TerrainLayer();
-
-  virtual void reset()
-  {
-    return;
-  }
-
-  virtual void onInitialize();
-  virtual void updateBounds(
+  
+    TerrainLayer() = default;
+    ~TerrainLayer() override = default;
+    void onInitialize() override;
+    void matchSize() override;
+    void updateBounds(
     double robot_x, double robot_y, double robot_yaw, double * min_x,
     double * min_y,
     double * max_x,
-    double * max_y); 
-  virtual void updateCosts(
+    double * max_y) override;
+  void updateCosts(
     nav2_costmap_2d::Costmap2D & master_grid,
-  int min_i, int min_j, int max_i, int max_j);
-
-  virtual void onFootprintChanged();
-
-  virtual bool isClearable() {return false;}
+  int min_i, int min_j, int max_i, int max_j) override;
+  bool isClearable() override;
+  void reset() override;
+  void terrainCallback(const std_msgs::msg::String::SharedPtr msg);
+  std::string stableterrain();
 
 private:
-  std::string old_terrain_ = "0";
-  double last_min_x_, last_min_y_, last_max_x_, last_max_y_;
-  bool need_recalculation_;
-  void terrainCallback(const std_msgs::msg::String::SharedPtr msg);
-  std::string terrain_topic_; 
+  bool enabled_{true};
+  double confidence_threshold_{0.6};   // param: terrain_layer.confidence_threshold
+  double max_range_x{3.0};
+  double max_range_y{3.0};
+  double theta_max_{35.0};
+  double r0_{1.0};
+  double pow_p_{4.0};
+  int history_len_{10}; 
+  std::string terrain_class_;
+  
+  double robot_x_, robot_y_, robot_yaw_;
+  
+  int width_{0};
+  int height_{0};
+  std::vector<float> terrain_costs_;             // terrain-only map
+  std::vector<std::string> history_;            // recent labels
+  std::unordered_map<std::string, unsigned char> cost_dict;
+  std::string last_label_;                      // last accepted label
+  
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr terrain_subscription_;
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr cost_publisher_;
-  std::string terrain_;
-  unsigned char terrain_cost_;
-  unsigned char smooth_cost_;
-  unsigned char rough_cost_;
-  unsigned char obstacle_cost_;
 };
 
 }  // namespace terra_sense
