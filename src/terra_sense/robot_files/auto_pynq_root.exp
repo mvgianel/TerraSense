@@ -1,0 +1,22 @@
+#!/usr/bin/expect -f
+
+set timeout -1
+set password "Contrasenia"
+
+# Start sudo su
+spawn sudo su
+expect "password for *:"
+send "$password\r"
+expect "#"
+
+# Source virtual environment script
+send "source /etc/profile.d/pynq_venv.sh\r"
+expect "#"
+
+# Source your setup_env.sh script
+send "source /home/ubuntu/setup_env.sh\r"
+expect "#"
+
+# Stay in an interactive bash session
+#send "bash\r"
+interact
