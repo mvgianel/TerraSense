@@ -1,3 +1,5 @@
+## OOOOOLDDD
+
 #!/usr/bin/env python3
 '''
 Heavily inspired by https://github.com/amd/Kria-RoboticsAI/blob/main/files/ROSAI/camera_input/rosai_camera/rosai_camera/rosai_camera_demo.py
@@ -13,11 +15,15 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from ament_index_python.packages import get_package_share_directory
 import time
-from collections import deque
 
-# import CV BRIDGE
 from cv_bridge import CvBridge, CvBridgeError
 import cv2
+from message_filters import Subscriber, ApproximateTimeSynchronizer
+
+
+from nav_msgs.msg import OccupancyGrid
+from geometry_msgs.msg import Pose
+from builtin_interfaces.msg import Time
 
 sys.path.append('/usr/lib/python3.10/site-packages')
 sys.path.append('/usr/local/share/pynq-venv/lib/python3.10/site-packages')
@@ -26,6 +32,15 @@ from pynq_dpu import DpuOverlay
 
 ml_model = 'zcu102_q_train2_2_resnet18_terraset6_91acc_19jul.h5.xmodel'
 class_names = ['cobblestonebrick', 'dirtground', 'grass', 'pavement', 'sand', 'stairs']
+
+CLASS_COST = {
+    'pavement': 10,
+    'cobblestonebrick': 80,
+    'dirtground': 100,
+    'grass': 150,
+    'sand': 200,
+    'stairs': 220,   # keep < 100 here; we'll map 100 -> lethal in the layer if desired
+}
 
 class MLPublisher(Node):
     def __init__(self):
@@ -63,12 +78,12 @@ class MLPublisher(Node):
         self.input_data = [np.empty(self.shapeIn, dtype=np.float32, order="C")]
 
         # --- metrics state ---
-        self.start_time = time.perf_counter()
-        self.first_msg_time = None           # perf_counter at first frame
-        self.last_msg_time  = None           # perf_counter at last frame
-        self.total_frames   = 0
-        self.model_ms = []                   # or: deque(maxlen=10000)
-        self.end2end_ms = []
+        # self.start_time = time.perf_counter()
+        # self.first_msg_time = None           # perf_counter at first frame
+        # self.last_msg_time  = None           # perf_counter at last frame
+        # self.total_frames   = 0
+        # self.model_ms = []                   # or: deque(maxlen=10000)
+        # self.end2end_ms = []
         
         self.get_logger().info('[INFO] __init__ exiting...')
         self.get_logger().info(f"[INFO] Input shape: {self.shapeIn}, Output shape: {self.shapeOut}")
@@ -89,9 +104,9 @@ class MLPublisher(Node):
 
     def listener_callback(self, msg):
         #self.get_logger().info("Starting of listener callback...")
-        t_cb_start = time.perf_counter()
-        if self.first_msg_time is None:
-            self.first_msg_time = t_cb_start
+        # t_cb_start = time.perf_counter()
+        # if self.first_msg_time is None:
+        #     self.first_msg_time = t_cb_start
         
         # ROS to RBG numboy
         cv2_image_org = self.bridge.imgmsg_to_cv2(msg,desired_encoding="rgb8")
@@ -105,12 +120,12 @@ class MLPublisher(Node):
 
         # Inference on DPU
          # --- model latency (DPU only) ---
-        t_inf_start = time.perf_counter()
+        # t_inf_start = time.perf_counter()
         job_id = self.dpu.execute_async(self.input_data, self.output_data)
         self.dpu.wait(job_id)
-        t_inf_end = time.perf_counter()
-        model_ms = (t_inf_end - t_inf_start) * 1e3
-        self.model_ms.append(model_ms)
+        # t_inf_end = time.perf_counter()
+        # model_ms = (t_inf_end - t_inf_start) * 1e3
+        # self.model_ms.append(model_ms)
 
         # Get top prediction
         temp = [j.reshape(1, self.outputSize) for j in self.output_data]
@@ -118,55 +133,20 @@ class MLPublisher(Node):
         predicted_index = np.argmax(probs)
 
         # Publish Data 
-        #self.get_logger().info("prediction="+str(prediction))
+        # self.get_logger().info("prediction="+str(prediction))
         msg = String()
+        # msg.data =' '
         msg.data = class_names[predicted_index]
         self.publisher_.publish(msg)
 
         # --- end-to-end latency (message arrival -> publish) ---
-        t_cb_end = time.perf_counter()
-        end2end_ms = (t_cb_end - t_cb_start) * 1e3
-        self.end2end_ms.append(end2end_ms)
+        # t_cb_end = time.perf_counter()
+        # end2end_ms = (t_cb_end - t_cb_start) * 1e3
+        # self.end2end_ms.append(end2end_ms)
 
-        self.total_frames += 1
-        self.last_msg_time = t_cb_end
-        # # Calculate ROI center
-        # roi_center_x = (x1 + x2) / 2
-        # roi_center_y = (y1 + y2) / 2
+        # self.total_frames += 1
+        # self.last_msg_time = t_cb_end
 
-        # # Assuming you have the camera intrinsic parameters
-        # fx = 500  # Focal length in x direction
-        # fy = 500  # Focal length in y direction
-        # cx = 320  # Principal point x-coordinate
-        # cy = 240  # Principal point y-coordinate
-
-        # # Depth value at the center of the ROI
-        # depth = 1.0  # This should be obtained from a depth sensor or estimation
-
-        # # Calculate the real-world coordinates
-        # real_x = (roi_center_x - cx) * depth / fx
-        # real_y = (roi_center_y - cy) * depth / fy
-        # real_z = depth
-
-        # # Create and publish the terrain location message
-        # terrain_location_msg = PointStamped()
-        # terrain_location_msg.header.frame_id = str(prediction)
-        # terrain_location_msg.point.x = real_x
-        # terrain_location_msg.point.y = real_y
-        # terrain_location_msg.point.z = real_z
-
-        # self.publisher_dist.publish(terrain_location_msg)
-
-
-        # DISPLAY
-        # cv2_bgr_image = cv2.cvtColor(cv2_image_org, cv2.COLOR_RGB2BGR)
-        # cv2.imshow('rosai_demo',cv2_bgr_image)
-        # cv2.waitKey(1)
-
-        # CONVERT BACK TO ROS & PUBLISH
-        # image_ros = bridge.cv2_to_imgmsg(cv2_image)
-        # self.publisher_.publish(image_ros)
-        # self.get_logger().info("published prediction="+str(prediction))
 
     def _report_metrics(self):
         if self.first_msg_time is None or self.last_msg_time is None or self.total_frames == 0:
@@ -191,11 +171,11 @@ class MLPublisher(Node):
             "======================================"
         )
 
-    def destroy_node(self):
-        try:
-            self._report_metrics()   # print FPS/latency once at shutdown
-        finally:
-            return super().destroy_node()
+    # def destroy_node(self):
+    #     try:
+    #         self._report_metrics()   # print FPS/latency once at shutdown
+    #     finally:
+    #         return super().destroy_node()
         
 def main(args=None):
     rclpy.init(args=args)
