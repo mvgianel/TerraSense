@@ -1,6 +1,6 @@
 # TerraSense
 
-![alt text](https://github.com/mvgianel/TerraSense-AMD-Contest/blob/main/src/imgs/TerraSenseGraphPaper.png)
+![alt text](https://github.com/mvgianel/TerraSense-AMD-Contest/blob/main/imgs/TerraSenseGraphPaper.png)
 
 ## TerraSet and ResNet18 Training on TerraSet
 
