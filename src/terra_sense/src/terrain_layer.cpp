@@ -11,23 +11,27 @@ namespace terra_sense
 
 void TerrainLayer::onInitialize()
 {
+  CostmapLayer::onInitialize();
   auto node = node_.lock();
+
   if (!node) {
     throw std::runtime_error{"Failed to lock node"};
   }
+
+  matchSize();
   
    cost_dict = {
-    {"pavement",      0},
+    {"pavement",      10},
     {"cobblestonebrick", 30},
-    {"dirtground",     100},
-    {"grass",          150},
-    {"sand",           200},
-    {"stairs",         250}
+    {"dirtground",     50},
+    {"grass",          80},
+    {"sand",           90},
+    {"stairs",         100}
   };
   
   node->get_parameter(name_ + ".enabled", enabled_);
   node->get_parameter(name_ + ".terrain_class", terrain_class_);
-  node->get_parameter(name_ + ".theta_max_", theta_max_);
+  node->get_parameter(name_ + ".theta_max", theta_max_);
   theta_max_ = theta_max_ * M_PI / 180.0;
   node->get_parameter(name_ + ".r0", r0_);
   node->get_parameter(name_ + ".pow_p", pow_p_);
@@ -35,6 +39,7 @@ void TerrainLayer::onInitialize()
   node->get_parameter(name_ + ".confidence_threshold", confidence_threshold_);
   node->get_parameter(name_ + ".max_range_x", max_range_x);
   node->get_parameter(name_ + ".max_range_y", max_range_y);
+  
 
   auto qos = rclcpp::QoS(rclcpp::KeepLast(1))
                .best_effort()
@@ -49,14 +54,15 @@ void TerrainLayer::onInitialize()
 
     // Terrain-only cost memory. This persists between updates and
   // only changes when a new terrain label is accepted with confidence.
-  terrain_costs_.assign(width_ * height_, 0.0f);
+  // terrain_costs_.assign(width_ * height_, 0.0f);
   
   last_label_.clear();
+  current_ = true;
 }
 
 bool TerrainLayer::isClearable() {
   // Prevent clearing so terrain overrides persist
-  return true;
+  return false;
 }
 
 void TerrainLayer::updateBounds(double robot_x, double robot_y, double robot_yaw,
@@ -78,6 +84,10 @@ void TerrainLayer::updateBounds(double robot_x, double robot_y, double robot_yaw
   *min_y = std::min(*min_y, robot_y - max_range_y);
   *max_x = std::max(*max_x, robot_x + max_range_x);
   *max_y = std::max(*max_y, robot_y + max_range_y);
+
+  touch(robot_x, robot_y, min_x, min_y, max_x, max_y);
+
+  current_ = true;
 }
 
 void TerrainLayer::updateCosts(nav2_costmap_2d::Costmap2D& master_grid, int min_i, int min_j, int max_i, int max_j)
@@ -86,12 +96,6 @@ void TerrainLayer::updateCosts(nav2_costmap_2d::Costmap2D& master_grid, int min_
   if (!enabled_) {
     return;
   }
-  
-  //  Ensure terrain_costs_ matches current costmap size
-if (terrain_costs_.size() != master_grid.getSizeInCellsX() * master_grid.getSizeInCellsY()) {
-    terrain_costs_.assign(master_grid.getSizeInCellsX() * master_grid.getSizeInCellsY(), 0.0f);
-}
-
 
   // Compute a stable terrain label with confidence gating
   const std::string lbl = stableterrain();
@@ -100,32 +104,32 @@ if (terrain_costs_.size() != master_grid.getSizeInCellsX() * master_grid.getSize
     (it != cost_dict.end()) ? it->second : 0;
 
   const bool have_stable_label = !lbl.empty() && base > 0;
+  if (!have_stable_label) {
+    // Nothing to add for this cycle
+    updateWithAddition(master_grid, min_i, min_j, max_i, max_j);
+    return;
+  }
 
-    // If we have a confident label, overwrite terrain_costs_
+  // If we have a confident label, overwrite terrain_costs_
   //    in the observed forward fan with the *new* terrain.
   //
   //    This is where we allow the terrain at a given place to change:
   //    - previously "sand" -> now "pavement" if lbl switches and passes
   //      confidence_threshold_.
-  if (have_stable_label) {
-    
-    const double rx  = robot_x_;
-    const double ry  = robot_y_;
-    const double yaw = robot_yaw_;
-    
+
     for (int j = min_j; j < max_j; ++j) {
       for (int i = min_i; i < max_i; ++i) {
         double wx, wy;
         master_grid.mapToWorld(i, j, wx, wy);
 
-        const double dx = wx - rx;
-        const double dy = wy - ry;
+        const double dx = wx - robot_x_;
+        const double dy = wy - robot_y_;
         const double r  = std::hypot(dx, dy);
         if (r <= 0.0 || r > max_range_x) {
           continue;
         }
 
-        double th = std::atan2(dy, dx) - yaw;
+        double th = std::atan2(dy, dx) - robot_yaw_;
         th = std::atan2(std::sin(th), std::cos(th)); // normalize [-pi, pi]
         if (std::abs(th) > theta_max_) {
           continue;
@@ -143,50 +147,36 @@ if (terrain_costs_.size() != master_grid.getSizeInCellsX() * master_grid.getSize
           cell_cost = static_cast<double>(base) * (w_r * w_t);
         }
 
-        if (cell_cost < 1.0) {
-          continue;
+        cell_cost = std::max(cell_cost, 1.0);
+        this->setCost(i, j, cell_cost);
+
+        // Read what other layers have already put into the master grid
+        unsigned char master_cost = master_grid.getCost(i, j);
+        // Treat unknown as 0 
+        if (master_cost == nav2_costmap_2d::NO_INFORMATION) {
+          master_cost = 0;  
         }
 
-        const size_t idx = master_grid.getIndex(i, j);
 
+        // Add and saturate below lethal
+        int sum = static_cast<int>(master_cost) + static_cast<int>(cell_cost);
+        // if (sum >= nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE) {
+        //   sum = nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE - 1;
+        // }
         // IMPORTANT:
         // We *overwrite* the stored terrain cost here.
         // That allows cheaper terrain to replace more expensive
         // terrain at the same place, once the label changes with confidence.
-        terrain_costs_[idx] = static_cast<float>(cell_cost);
+        // this->setCost(i,j, static_cast<unsigned char>(std::round(cell_cost)));
+        master_grid.setCost(i, j, std::min(sum, 252));
       }
     }
-  }
 
-  // Push terrain-only map into master_grid for this region.
-  //
-  // We write the current terrain_costs_ (which includes all
-  // previously seen terrain) directly into master_grid.
-  //
-  // This plugin should run BEFORE static/obstacle/inflation layers
-  // in the Nav2 plugin list, so they can "add on top" of terrain.
-  for (int j = min_j; j < max_j; ++j) {
-    for (int i = min_i; i < max_i; ++i) {
-      const size_t idx = master_grid.getIndex(i, j);
-      if (idx >= terrain_costs_.size()) {
-          // Safety: resize or skip to avoid UB
-          continue;
-        }
-      const float t_cost = terrain_costs_[idx];
+    // RCLCPP_INFO(rclcpp::get_logger("TerrainLayer"), "terrain=%s base=%d ",
+    //         lbl.c_str(), base);
 
-      if (t_cost <= 0.0f) {
-        // No terrain information for this cell yet;
-        // leave master_grid as-is (other layers will handle it).
-        continue;
-      }
-
-
-  // RCLCPP_INFO(rclcpp::get_logger("TerrainLayer"), "New terrain: '%s', cost: %d", terrain_.c_str(), terrain_cost_);
-
-      unsigned char terrain = static_cast<unsigned char>(std::round(t_cost));
-      master_grid.setCost(i, j, terrain);
-    }
-  }
+  //  Add terrain cost onto whatever is already in master_grid
+  // this->updateWithAddition(master_grid, min_i, min_j, max_i, max_j);
 }
 
 /**
@@ -224,10 +214,14 @@ std::string TerrainLayer::stableterrain()
   const double frac =
     static_cast<double>(best_count) / std::max(1, total);
 
+
   if (frac >= confidence_threshold_) {
     // Accept this as the new terrain label
     last_label_ = best_it->first;
   }
+
+//  RCLCPP_INFO(rclcpp::get_logger("TerrainLayer"), "label=%s confidence=%f ",
+//             last_label_.c_str(), frac);
 
   // If frac < threshold, keep last_label_ (terrain does not change this cycle).
   return last_label_;
@@ -238,7 +232,15 @@ void TerrainLayer::matchSize()
   auto * main_map = layered_costmap_->getCostmap();
   width_  = main_map->getSizeInCellsX();
   height_ = main_map->getSizeInCellsY();
-  terrain_costs_.assign(width_ * height_, 0.0f);
+  double res         = main_map->getResolution();
+  double origin_x    = main_map->getOriginX();
+  double origin_y    = main_map->getOriginY();
+
+  // Resize our internal terrain-only costmap
+  resizeMap(width_, height_, res, origin_x, origin_y);
+
+  // terrain_costs_.assign(width_ * height_, 0.0f);  // persistent terrain memory
+  resetMaps();            
 }
 
 void TerrainLayer::terrainCallback(const std_msgs::msg::String::SharedPtr msg)
@@ -251,7 +253,7 @@ void TerrainLayer::terrainCallback(const std_msgs::msg::String::SharedPtr msg)
   //terrain_cost_ = (cost != cost_dict.end() ? cost->second : NO_INFORMATION);
   
   history_.push_back(msg->data);
-  if (history_.size() > history_len_) {
+  if (history_.size() > static_cast<long unsigned int>(history_len_)) {
     history_.erase(history_.begin());
   }
 
@@ -259,11 +261,9 @@ void TerrainLayer::terrainCallback(const std_msgs::msg::String::SharedPtr msg)
   }
 
 void TerrainLayer::reset() {
- history_.clear();
+  resetMaps();
+  history_.clear();
   last_label_.clear();
-
-  // Clear terrain map (but keep the same size!)
-  std::fill(terrain_costs_.begin(), terrain_costs_.end(), 0.0f);
 }
 
 }  // namespace terra_sense
